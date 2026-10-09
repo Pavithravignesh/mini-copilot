@@ -52,25 +52,24 @@ function Documents() {
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
-  const [uploadsEnabled, setUploadsEnabled] = useState(true);
+  const [uploadMode, setUploadMode] = useState("disabled"); // "supabase" | "local" | "disabled"
   const fileRef = useRef(null);
+  const uploadsEnabled = uploadMode !== "disabled";
 
   useEffect(() => {
     fetchJson("/api/documents")
       .then((d) => {
         setDocs(d.documents);
-        setUploadsEnabled(d.uploadsEnabled !== false);
+        setUploadMode(d.uploadMode);
       })
       .catch((err) => setStatus(err.message));
   }, []);
 
-  async function call(url, options, doneText) {
+  async function run(work) {
     setBusy(true);
-    setStatus("Indexing…");
     try {
-      const data = await fetchJson(url, options);
+      const data = await work();
       setDocs(data.documents);
-      setStatus(`${doneText} · ${data.stats.chunks} chunks indexed`);
     } catch (err) {
       setStatus(err.message);
     } finally {
@@ -78,16 +77,44 @@ function Documents() {
     }
   }
 
+  const json = (body) => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+
   function upload(e) {
     const file = e.target.files[0];
     e.target.value = ""; // allow choosing the same file again
     if (!file) return;
-    call(`/api/documents?name=${encodeURIComponent(file.name)}`, { method: "POST", body: file }, `Added ${file.name}`);
+    if (file.size > 10 * 1024 * 1024) return setStatus("File is larger than 10 MB");
+
+    run(async () => {
+      let data;
+      if (uploadMode === "supabase") {
+        // 1. get a one-time upload URL  2. send the file straight to Supabase  3. ask the server to index it
+        setStatus(`Uploading ${file.name}…`);
+        const { name, uploadUrl } = await fetchJson("/api/upload-url", json({ name: file.name }));
+        const put = await fetch(uploadUrl, {
+          method: "PUT",
+          headers: { "Content-Type": file.type || "application/octet-stream", "x-upsert": "true" },
+          body: file,
+        });
+        if (!put.ok) throw new Error(`Upload failed (${put.status}): ${(await put.text()).slice(0, 80)}`);
+        setStatus(`Indexing ${name}…`);
+        data = await fetchJson("/api/index-document", json({ name }));
+      } else {
+        setStatus(`Indexing ${file.name}…`);
+        data = await fetchJson(`/api/documents?name=${encodeURIComponent(file.name)}`, { method: "POST", body: file });
+      }
+      setStatus(`Added ${data.indexed.name} · ${data.indexed.chunks} chunks`);
+      return data;
+    });
   }
 
   function remove(name) {
     if (!confirm(`Remove ${name}?`)) return;
-    call(`/api/documents?name=${encodeURIComponent(name)}`, { method: "DELETE" }, `Removed ${name}`);
+    run(async () => {
+      const data = await fetchJson(`/api/documents?name=${encodeURIComponent(name)}`, { method: "DELETE" });
+      setStatus(`Removed ${name}`);
+      return data;
+    });
   }
 
   return (
@@ -101,7 +128,7 @@ function Documents() {
             {busy ? "Indexing…" : "Upload PDF / Word / text"}
           </button>
         ) : (
-          <span className="docs-status">Demo mode: run locally to upload your own files</span>
+          <span className="docs-status">Demo mode: uploads need Supabase (see README)</span>
         )}
         <input ref={fileRef} type="file" accept=".pdf,.docx,.txt,.md" hidden onChange={upload} />
       </div>

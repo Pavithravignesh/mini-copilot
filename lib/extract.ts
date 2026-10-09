@@ -1,22 +1,27 @@
 // Gets plain text out of a file, based on its extension. All parsers are pure JavaScript.
-import fs from "node:fs";
 import path from "node:path";
-import { extractText, getDocumentProxy } from "unpdf";
+import { extractText as extractPdfText, getDocumentProxy } from "unpdf";
 import mammoth from "mammoth";
 
 export const SUPPORTED_EXTENSIONS = [".md", ".txt", ".pdf", ".docx"];
 
-export async function extractFileText(filePath: string): Promise<string> {
-  const ext = path.extname(filePath).toLowerCase();
-  const buffer = fs.readFileSync(filePath);
+// Keep only a safe file name (no folders, no odd characters) with a supported extension
+export function safeFileName(name: unknown): string {
+  const base = path.basename(String(name ?? "")).replace(/[^\w.\- ]/g, "_");
+  if (!base || !SUPPORTED_EXTENSIONS.includes(path.extname(base).toLowerCase())) {
+    throw new Error(`Only ${SUPPORTED_EXTENSIONS.join(", ")} files are supported`);
+  }
+  return base;
+}
 
-  switch (ext) {
+export async function extractText(fileName: string, buffer: Buffer): Promise<string> {
+  switch (path.extname(fileName).toLowerCase()) {
     case ".md":
     case ".txt":
       return buffer.toString("utf8");
     case ".pdf": {
       const pdf = await getDocumentProxy(new Uint8Array(buffer));
-      const { text } = await extractText(pdf, { mergePages: true });
+      const { text } = await extractPdfText(pdf, { mergePages: true });
       return text;
     }
     case ".docx": {
@@ -24,6 +29,6 @@ export async function extractFileText(filePath: string): Promise<string> {
       return value;
     }
     default:
-      throw new Error(`Unsupported file type: ${ext}`);
+      throw new Error(`Unsupported file type: ${fileName}`);
   }
 }

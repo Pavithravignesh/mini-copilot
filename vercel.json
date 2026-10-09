@@ -4,6 +4,7 @@
   "outputDirectory": "public",
   "functions": {
     "api/*.js": {
+      "maxDuration": 60,
       "includeFiles": "{data,storage}/**"
     }
   }

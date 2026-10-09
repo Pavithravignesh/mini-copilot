@@ -1,13 +1,13 @@
-// Vercel serverless function: GET /api/documents -> the documents baked in at deploy time.
-// Uploads are disabled on Vercel: its filesystem is read-only, so a saved file would vanish.
-// Run the app locally (npm start) to upload documents.
-import { listDocuments } from "../dist/lib/ingest.js";
+// Vercel serverless function:
+//   GET    /api/documents            -> { documents, uploadMode }
+//   DELETE /api/documents?name=x.pdf -> remove a document
+// Uploads on Vercel go through /api/upload-url + /api/index-document (Supabase).
+import { api } from "../dist/lib/api.js";
 
-export default function handler(req, res) {
-  if (req.method === "GET") {
-    return res.status(200).json({ documents: listDocuments(), uploadsEnabled: false });
-  }
-  res.status(501).json({
-    error: "Uploads are not available on the hosted demo (read-only storage). Run the app locally to upload files.",
-  });
+export default async function handler(req, res) {
+  const result =
+    req.method === "GET" ? await api.listDocuments()
+    : req.method === "DELETE" ? await api.deleteDocument(req.query.name)
+    : { status: 405, body: { error: "Use GET or DELETE" } };
+  res.status(result.status).json(result.body);
 }
