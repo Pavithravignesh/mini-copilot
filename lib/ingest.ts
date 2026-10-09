@@ -20,11 +20,16 @@ export async function indexDocument(name: string, buffer: Buffer) {
   return { name, chunks: chunks.length };
 }
 
-// Index every supported file in data/ (the samples, plus local uploads)
+// Index the files in data/.
+// Local store: everything (the .md samples plus your local uploads).
+// Supabase: only the .md samples. Supabase is shared with the public site, and local uploads
+// (PDF / Word / text in data/) are private - they must never be published by a re-index.
 export async function indexDataFolder() {
+  const store = await getStore();
+  const allowed = store.mode === "supabase" ? [".md"] : SUPPORTED_EXTENSIONS;
   const files = fs
     .readdirSync(DATA_DIR)
-    .filter((f) => SUPPORTED_EXTENSIONS.includes(path.extname(f).toLowerCase()))
+    .filter((f) => allowed.includes(path.extname(f).toLowerCase()))
     .sort();
   const results = [];
   for (const file of files) results.push(await indexDocument(file, fs.readFileSync(path.join(DATA_DIR, file))));

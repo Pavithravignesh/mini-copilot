@@ -2,12 +2,14 @@
 // Tables, search function and bucket are created by supabase/schema.sql.
 // Uses the SECRET key, so this file must only ever run on the server.
 import { createClient } from "@supabase/supabase-js";
+import ws from "ws";
 import type { Store } from "../store.js";
 
 export const BUCKET = "documents";
 
 export const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SECRET_KEY!, {
   auth: { persistSession: false },
+  realtime: { transport: ws as any }, // Node 20 has no built-in WebSocket; we don't use realtime, but the client needs one
 });
 
 function check<T>(result: { data: T | null; error: { message: string } | null }, action: string): T {
