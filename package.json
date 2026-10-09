@@ -8,7 +8,8 @@
     "start": "tsc && node dist/scripts/server.js",
     "ingest": "tsc && node dist/scripts/ingest.js",
     "ask": "tsc && node dist/scripts/ask.js",
-    "push": "node tools/push.mjs"
+    "push": "node tools/push.mjs",
+    "vercel-build": "tsc && node dist/scripts/ingest.js"
   },
   "dependencies": {
     "dotenv": "^18.0.7",

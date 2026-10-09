@@ -27,19 +27,30 @@ function gh(method, endpoint, body) {
 }
 
 // --- which files to upload -------------------------------------------------
-const ignored = fs
-  .readFileSync(path.join(ROOT, ".gitignore"), "utf8")
-  .split(/\r?\n/)
+// Supports simple .gitignore lines: "name", "folder/", "data/*.pdf" (* = any characters except /)
+const patterns = [".git", ".env", ...fs.readFileSync(path.join(ROOT, ".gitignore"), "utf8").split(/\r?\n/)]
   .map((l) => l.trim().replace(/\/$/, ""))
-  .filter((l) => l && !l.startsWith("#"));
-const ALWAYS_SKIP = new Set([".git", ".env", ...ignored]);
+  .filter((l) => l && !l.startsWith("#"))
+  .map((p) => ({
+    hasSlash: p.includes("/"),
+    regex: new RegExp("^" + p.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*") + "$"),
+  }));
+
+const isIgnored = (relPath) =>
+  patterns.some(({ hasSlash, regex }) => regex.test(hasSlash ? relPath : path.posix.basename(relPath)));
 
 function listFiles(dir) {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    if (ALWAYS_SKIP.has(entry.name)) return [];
     const full = path.join(dir, entry.name);
-    return entry.isDirectory() ? listFiles(full) : [path.relative(ROOT, full).split(path.sep).join("/")];
+    const rel = path.relative(ROOT, full).split(path.sep).join("/");
+    if (isIgnored(rel)) return [];
+    return entry.isDirectory() ? listFiles(full) : [rel];
   });
+}
+
+if (process.argv.includes("--dry-run")) {
+  console.log(listFiles(ROOT).join("\n"));
+  process.exit(0);
 }
 
 const files = listFiles(ROOT);

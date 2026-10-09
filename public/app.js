@@ -1,6 +1,20 @@
 // The chat UI - a small React app (JSX is compiled in the browser by Babel).
 const { useState, useRef, useEffect } = React;
 
+// fetch + JSON that never crashes on an HTML/text error page
+async function fetchJson(url, options) {
+  const res = await fetch(url, options);
+  const text = await res.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error(`Server returned ${res.status}: ${text.slice(0, 80)}`);
+  }
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  return data;
+}
+
 const SUGGESTIONS = [
   "How long can I return headphones?",
   "Do loyalty points expire?",
@@ -38,19 +52,23 @@ function Documents() {
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
+  const [uploadsEnabled, setUploadsEnabled] = useState(true);
   const fileRef = useRef(null);
 
   useEffect(() => {
-    fetch("/api/documents").then((r) => r.json()).then((d) => setDocs(d.documents));
+    fetchJson("/api/documents")
+      .then((d) => {
+        setDocs(d.documents);
+        setUploadsEnabled(d.uploadsEnabled !== false);
+      })
+      .catch((err) => setStatus(err.message));
   }, []);
 
   async function call(url, options, doneText) {
     setBusy(true);
     setStatus("Indexing…");
     try {
-      const res = await fetch(url, options);
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      const data = await fetchJson(url, options);
       setDocs(data.documents);
       setStatus(`${doneText} · ${data.stats.chunks} chunks indexed`);
     } catch (err) {
@@ -78,9 +96,13 @@ function Documents() {
         <button className="link" onClick={() => setOpen(!open)}>
           {open ? "Hide" : "Show"} documents ({docs.length})
         </button>
-        <button className="upload" onClick={() => fileRef.current.click()} disabled={busy}>
-          {busy ? "Indexing…" : "Upload PDF / Word / text"}
-        </button>
+        {uploadsEnabled ? (
+          <button className="upload" onClick={() => fileRef.current.click()} disabled={busy}>
+            {busy ? "Indexing…" : "Upload PDF / Word / text"}
+          </button>
+        ) : (
+          <span className="docs-status">Demo mode: run locally to upload your own files</span>
+        )}
         <input ref={fileRef} type="file" accept=".pdf,.docx,.txt,.md" hidden onChange={upload} />
       </div>
       {status && <div className="docs-status">{status}</div>}
@@ -89,7 +111,9 @@ function Documents() {
           {docs.map((d) => (
             <li key={d}>
               <span>{d}</span>
-              <button className="link danger" onClick={() => remove(d)} disabled={busy}>Remove</button>
+              {uploadsEnabled && (
+                <button className="link danger" onClick={() => remove(d)} disabled={busy}>Remove</button>
+              )}
             </li>
           ))}
         </ul>
@@ -125,13 +149,11 @@ function App() {
     setInput("");
     setLoading(true);
     try {
-      const res = await fetch("/api/chat", {
+      const data = await fetchJson("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Request failed");
       setMessages((m) => [...m, { role: "assistant", content: data.answer, sources: data.sources }]);
     } catch (err) {
       setMessages((m) => [...m, { role: "assistant", content: err.message, error: true }]);

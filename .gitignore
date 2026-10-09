@@ -4,3 +4,8 @@ node_modules/
 storage/
 dist/
 .claude/
+
+# Documents you upload through the app stay on your machine (only the .md samples are published)
+data/*.pdf
+data/*.docx
+data/*.txt
