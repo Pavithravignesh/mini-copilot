@@ -58,6 +58,8 @@ const ICON_PATHS = {
   sun: "M12 3v2M12 19v2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M3 12h2M19 12h2M5.6 18.4 7 17M17 7l1.4-1.4M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0z",
   moon: "M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z",
   monitor: "M3 4h18v12H3zM8 20h8M12 16v4",
+  chevronDown: "M6 9l6 6 6-6",
+  cpu: "M9 3v2M15 3v2M9 19v2M15 19v2M3 9h2M3 15h2M19 9h2M19 15h2M7 5h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM9 9h6v6H9z",
 };
 
 function Icon({ name, size = 18, className = "" }) {
@@ -353,6 +355,53 @@ function Thinking() {
   );
 }
 
+/* ---------- model menu ---------- */
+
+// A custom dropdown: pill button + popover card listing each model with its description
+function ModelMenu({ models, value, onChange, disabled }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  const current = models.find((m) => m.id === value) ?? models[0];
+
+  // close on outside click or Escape
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => { if (!rootRef.current?.contains(e.target)) setOpen(false); };
+    const onKey = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", onDown); document.removeEventListener("keydown", onKey); };
+  }, [open]);
+
+  if (models.length < 2 || !current) return <span />;
+  return (
+    <div className="model-menu" ref={rootRef}>
+      <button type="button" className={`model-trigger ${open ? "open" : ""}`} onClick={() => setOpen(!open)}
+        disabled={disabled} aria-haspopup="listbox" aria-expanded={open}>
+        <Icon name="cpu" size={14} />
+        <span>{current.label}</span>
+        <Icon name="chevronDown" size={14} className="chevron" />
+      </button>
+      {open && (
+        <div className="model-popover" role="listbox" aria-label="Model">
+          <div className="popover-label">Model</div>
+          {models.map((m) => (
+            <button type="button" key={m.id} role="option" aria-selected={m.id === current.id}
+              className={`model-option ${m.id === current.id ? "selected" : ""}`}
+              onClick={() => { onChange(m.id); setOpen(false); }}>
+              <span className="model-option-text">
+                <span className="model-option-name">{m.label}</span>
+                {m.note && <span className="model-option-note">{m.note}</span>}
+              </span>
+              {m.id === current.id && <Icon name="check" size={15} className="model-check" />}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ---------- composer ---------- */
 
 function Composer({ onSend, loading, models, model, onModel }) {
@@ -386,12 +435,7 @@ function Composer({ onSend, loading, models, model, onModel }) {
           autoFocus
         />
         <div className="composer-bar">
-          {models.length > 1 ? (
-            <select className="model-select" value={model} onChange={(e) => onModel(e.target.value)} disabled={loading}
-              title={models.find((m) => m.id === model)?.note} aria-label="Model">
-              {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-            </select>
-          ) : <span />}
+          <ModelMenu models={models} value={model} onChange={onModel} disabled={loading} />
           <button type="submit" className="send-btn" disabled={loading || !text.trim()} aria-label="Send">
             <Icon name="send" size={18} />
           </button>
