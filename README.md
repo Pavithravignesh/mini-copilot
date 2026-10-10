@@ -20,6 +20,7 @@ Everything runs on **free tiers**: [Groq](https://console.groq.com) for the LLM,
 
 - Chat in the browser with answers that cite their sources
 - **Upload PDF, Word (.docx), .txt and .md** files (up to 10 MB); they are indexed automatically
+- **Model picker**: switch between GPT-OSS 120B, GPT-OSS 20B and Qwen 3.8 27B; each answer shows the model, time and tokens used
 - "Show sources" reveals the exact chunks used and their similarity scores
 - Refuses to guess: if the documents don't contain the answer, it says so
 - Two interchangeable vector stores: a **local JSON file** (zero setup) or **Supabase pgvector** (production)
@@ -129,7 +130,8 @@ mini-copilot/
 
 | Method | Path | Body | Returns |
 | --- | --- | --- | --- |
-| `POST` | `/api/chat` | `{ "question": "..." }` | `{ answer, sources[] }` |
+| `POST` | `/api/chat` | `{ "question": "...", "model"?: "..." }` | `{ answer, sources[], model, seconds, tokens }` |
+| `GET` | `/api/models` | — | `{ models[], default }` |
 | `GET` | `/api/documents` | — | `{ documents[], uploadMode }` |
 | `DELETE` | `/api/documents?name=file.pdf` | — | `{ documents[], deleted }` |
 | `POST` | `/api/upload-url` | `{ "name": "file.pdf" }` | `{ name, uploadUrl }` (Supabase) |
@@ -147,6 +149,12 @@ mini-copilot/
 | Groq (default, free) | `https://api.groq.com/openai/v1` | `openai/gpt-oss-120b` |
 | Google Gemini (free tier) | `https://generativelanguage.googleapis.com/v1beta/openai/` | `gemini-2.5-flash` |
 | Ollama (local) | `http://localhost:11434/v1` | `qwen2.5:7b` |
+
+### Choosing which models the UI offers
+
+The picker lists the models in [`lib/models.ts`](lib/models.ts). The server rejects any model not on that list, so visitors can't use your key for other models. To change the list without editing code, set `LLM_MODELS` (comma-separated ids) in `.env` or on Vercel; `LLM_MODEL` sets the default.
+
+All three default models have a **131,072-token context window**; a typical question here uses about 300–400 tokens.
 
 ## About the search (hashing vectors)
 
