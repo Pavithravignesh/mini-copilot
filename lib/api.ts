@@ -6,6 +6,7 @@ import { answerQuestion } from "./rag.js";
 import { DATA_DIR, indexDocument } from "./ingest.js";
 import { safeFileName } from "./extract.js";
 import { getStore } from "./store.js";
+import { DEFAULT_MODEL, MODELS, resolveModel } from "./models.js";
 
 export type ApiResult = { status: number; body: unknown };
 
@@ -47,12 +48,13 @@ export async function handle(fn: () => Promise<ApiResult>): Promise<ApiResult> {
 }
 
 export const api = {
-  chat: (question: unknown) =>
+  chat: (question: unknown, model?: unknown) =>
     handle(async () => {
       if (typeof question !== "string" || !question.trim()) return fail(400, "question is required");
-      const { answer, sources } = await answerQuestion(question.trim());
-      return ok({ answer, sources });
+      return ok(await answerQuestion(question.trim(), resolveModel(model)));
     }),
+
+  models: () => handle(async () => ok({ models: MODELS, default: DEFAULT_MODEL })),
 
   listDocuments: () => handle(async () => ok(await documentsBody())),
 

@@ -1,10 +1,10 @@
 // One client for any OpenAI-compatible provider (Groq, Gemini, Ollama, OpenAI).
 // Switch providers by editing .env (or the host's environment variables) - no code changes.
+// Which models may be used is decided in lib/models.ts.
 import "dotenv/config";
 import OpenAI from "openai";
 
 const LLM_BASE_URL = process.env.LLM_BASE_URL || "https://api.groq.com/openai/v1";
-const LLM_MODEL = process.env.LLM_MODEL || "openai/gpt-oss-120b";
 const LLM_API_KEY = process.env.LLM_API_KEY;
 
 if (!LLM_API_KEY || LLM_API_KEY.startsWith("paste_")) {
@@ -12,4 +12,3 @@ if (!LLM_API_KEY || LLM_API_KEY.startsWith("paste_")) {
 }
 
 export const llm = new OpenAI({ baseURL: LLM_BASE_URL, apiKey: LLM_API_KEY });
-export const MODEL = LLM_MODEL;

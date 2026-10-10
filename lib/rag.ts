@@ -13,7 +13,10 @@ export async function retrieve(question: string, topK = 3): Promise<SearchResult
   return (await store.search(queryEmbedding, topK)).filter((s) => s.score > 0);
 }
 
-export async function answerQuestion(question: string) {
+// Some models (e.g. Qwen) write their reasoning in <think>...</think> before the answer; drop it
+const stripThinking = (text: string) => text.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+
+export async function answerQuestion(question: string, model: string) {
   // 1. Retrieve
   const sources = await retrieve(question);
 
@@ -23,9 +26,10 @@ export async function answerQuestion(question: string) {
     : "(no matching sources)";
 
   // 3. Generate (imported here so search still works without an LLM key)
-  const { llm, MODEL } = await import("./llm.js");
+  const { llm } = await import("./llm.js");
+  const started = Date.now();
   const response = await llm.chat.completions.create({
-    model: MODEL,
+    model,
     temperature: 0,
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
@@ -33,5 +37,11 @@ export async function answerQuestion(question: string) {
     ],
   });
 
-  return { answer: response.choices[0].message.content ?? "", sources };
+  return {
+    answer: stripThinking(response.choices[0].message.content ?? ""),
+    sources,
+    model,
+    seconds: (Date.now() - started) / 1000,
+    tokens: response.usage?.total_tokens, // input + output, to compare against the context window
+  };
 }

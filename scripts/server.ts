@@ -1,6 +1,7 @@
 // A tiny web server using only Node's built-in http module (no Express, no native binaries).
 // Routes (same as the Vercel functions in api/):
-//   POST   /api/chat                    { question }  -> { answer, sources }
+//   POST   /api/chat           { question, model? }  -> { answer, sources, model, seconds, tokens }
+//   GET    /api/models                                -> { models, default }
 //   GET    /api/documents                              -> { documents, uploadMode }
 //   POST   /api/documents?name=x.pdf     raw bytes     -> local mode upload
 //   DELETE /api/documents?name=x.pdf                   -> remove a document
@@ -42,8 +43,12 @@ function send(res: http.ServerResponse, { status, body }: ApiResult) {
 async function route(req: http.IncomingMessage, url: URL): Promise<ApiResult | null> {
   const name = url.searchParams.get("name");
   switch (`${req.method} ${url.pathname}`) {
-    case "POST /api/chat":
-      return api.chat((await readJson(req)).question);
+    case "POST /api/chat": {
+      const body = await readJson(req);
+      return api.chat(body.question, body.model);
+    }
+    case "GET /api/models":
+      return api.models();
     case "GET /api/documents":
       return api.listDocuments();
     case "POST /api/documents":

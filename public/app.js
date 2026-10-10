@@ -149,11 +149,37 @@ function Documents() {
   );
 }
 
-function Message({ msg }) {
+// Remember the chosen model in this browser (storage can be blocked, so never let it throw)
+const MODEL_KEY = "mini-copilot:model";
+const savedModel = () => { try { return localStorage.getItem(MODEL_KEY); } catch { return null; } };
+const saveModel = (id) => { try { localStorage.setItem(MODEL_KEY, id); } catch {} };
+
+function ModelPicker({ models, value, onChange, disabled }) {
+  if (models.length < 2) return null;
+  const current = models.find((m) => m.id === value);
+  return (
+    <label className="model-picker" title={current?.note}>
+      <span>Model</span>
+      <select value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled}>
+        {models.map((m) => (
+          <option key={m.id} value={m.id}>{m.label}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function Message({ msg, models }) {
+  const label = models.find((m) => m.id === msg.model)?.label ?? msg.model;
   return (
     <div className={`msg ${msg.role}`}>
       <div className="bubble">
         {msg.error ? <span className="error">{msg.content}</span> : msg.content}
+        {msg.model && (
+          <div className="meta">
+            {label} · {msg.seconds.toFixed(1)}s{msg.tokens ? ` · ${msg.tokens} tokens` : ""}
+          </div>
+        )}
         {msg.role === "assistant" && <Sources sources={msg.sources} />}
       </div>
     </div>
@@ -164,7 +190,24 @@ function App() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [models, setModels] = useState([]);
+  const [model, setModel] = useState("");
   const bottomRef = useRef(null);
+
+  useEffect(() => {
+    fetchJson("/api/models")
+      .then((d) => {
+        setModels(d.models);
+        const saved = savedModel();
+        setModel(d.models.some((m) => m.id === saved) ? saved : d.default);
+      })
+      .catch(() => {}); // no picker: the server uses its default model
+  }, []);
+
+  function chooseModel(id) {
+    setModel(id);
+    saveModel(id);
+  }
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -179,9 +222,16 @@ function App() {
       const data = await fetchJson("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question }),
+        body: JSON.stringify({ question, model: model || undefined }),
       });
-      setMessages((m) => [...m, { role: "assistant", content: data.answer, sources: data.sources }]);
+      setMessages((m) => [...m, {
+        role: "assistant",
+        content: data.answer,
+        sources: data.sources,
+        model: data.model,
+        seconds: data.seconds,
+        tokens: data.tokens,
+      }]);
     } catch (err) {
       setMessages((m) => [...m, { role: "assistant", content: err.message, error: true }]);
     } finally {
@@ -194,6 +244,7 @@ function App() {
       <header>
         <h1>Mini Copilot</h1>
         <span className="sub">Answers from your documents</span>
+        <ModelPicker models={models} value={model} onChange={chooseModel} disabled={loading} />
       </header>
       <Documents />
 
@@ -208,7 +259,7 @@ function App() {
             </div>
           </div>
         )}
-        {messages.map((msg, i) => <Message key={i} msg={msg} />)}
+        {messages.map((msg, i) => <Message key={i} msg={msg} models={models} />)}
         {loading && <div className="msg assistant"><div className="bubble thinking">Searching documents…</div></div>}
         <div ref={bottomRef} />
       </main>
