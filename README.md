@@ -21,6 +21,7 @@ Everything runs on **free tiers**: [Groq](https://console.groq.com) for the LLM,
 - Chat in the browser with answers that cite their sources
 - **Upload PDF, Word (.docx), .txt and .md** files (up to 10 MB); they are indexed automatically
 - **Quiz mode**: pick a document, the AI suggests topics ("Which topic would you like to be quizzed on?"), then asks 5 or 10 multiple-choice and short-answer questions one at a time, grades short answers, and shows a score with review
+- **Interview practice**: pick a document and a topic (or all topics); the AI writes 15 or 20 real-world, scenario-based interview questions, Junior → Senior, shown one at a time with Previous / Next, jump dots and ← → keys. No answers — practise out loud
 - **Model picker**: switch between GPT-OSS 120B, GPT-OSS 20B and Qwen 3.8 27B; each answer shows the model, time and tokens used
 - "Show sources" reveals the exact chunks used and their similarity scores
 - Refuses to guess: if the documents don't contain the answer, it says so
@@ -57,6 +58,14 @@ ANSWERING (every question)
 ```
 
 All quiz logic is in [`lib/quiz.ts`](lib/quiz.ts). Questions come only from the chosen document; a topic the document doesn't cover is rejected.
+
+### Interview practice
+
+Same retrieval as the quiz (a topic's closest chunks, or an even sample of the whole document for "All topics"), then one LLM call writes 15 or 20 scenario questions as JSON, each with the skill it tests and a level. Logic: [`lib/interview.ts`](lib/interview.ts).
+
+### Free-tier rate limits
+
+Groq's free tier allows about **8,000 tokens per minute per model**. Prompts are kept small (sampled, trimmed chunks), topic suggestions are cached per document, and the client fails fast with a clear message instead of silently retrying. If you hit the limit, wait a minute or switch model — each model has its own budget.
 
 ### Uploads in production
 
@@ -148,6 +157,7 @@ mini-copilot/
 | `GET` | `/api/models` | — | `{ models[], default }` |
 | `POST` | `/api/quiz/topics` | `{ "name": "file.pdf" }` | `{ name, topics[] }` |
 | `POST` | `/api/quiz/generate` | `{ "name", "topic", "count": 5 \| 10 }` | `{ topic, questions[], sources[] }` |
+| `POST` | `/api/interview/generate` | `{ "name", "topic" (or "All topics"), "count": 15 \| 20 }` | `{ name, topic, questions[] }` |
 | `POST` | `/api/quiz/grade` | `{ "question", "answer", "userAnswer", "source" }` | `{ verdict, feedback }` |
 | `GET` | `/api/documents` | — | `{ documents[], uploadMode }` |
 | `DELETE` | `/api/documents?name=file.pdf` | — | `{ documents[], deleted }` |

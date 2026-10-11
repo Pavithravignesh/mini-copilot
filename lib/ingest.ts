@@ -5,6 +5,7 @@ import { chunkDocument } from "./chunk.js";
 import { embed } from "./embeddings.js";
 import { extractText, SUPPORTED_EXTENSIONS } from "./extract.js";
 import { getStore } from "./store.js";
+import { forgetTopics } from "./quiz.js";
 
 export const DATA_DIR = path.join(process.cwd(), "data");
 
@@ -17,6 +18,7 @@ export async function indexDocument(name: string, buffer: Buffer) {
   const embeddings = await embed(chunks.map((c) => `${c.heading}\n${c.text}`));
   const store = await getStore();
   await store.saveDocument(name, chunks.map((c, i) => ({ ...c, embedding: embeddings[i] })));
+  forgetTopics(name); // new content: suggest topics afresh
   return { name, chunks: chunks.length };
 }
 

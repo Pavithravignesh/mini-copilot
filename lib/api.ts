@@ -43,6 +43,13 @@ export async function handle(fn: () => Promise<ApiResult>): Promise<ApiResult> {
   } catch (err) {
     console.error(err);
     const status = (err as { status?: number }).status ?? 500;
+    if (status === 429) {
+      // Provider rate limit (e.g. Groq free tier: tokens per minute, per model)
+      return fail(429, "The AI model's free usage limit was reached for this minute. Wait about a minute, or switch to another model (each has its own limit).");
+    }
+    if ((err as Error)?.name === "APIConnectionTimeoutError") {
+      return fail(504, "The AI model took too long to reply. Please try again.");
+    }
     return fail(status, err instanceof Error ? err.message : "server error");
   }
 }
@@ -72,6 +79,16 @@ export const api = {
       if (typeof topic !== "string" || !topic.trim() || topic.length > 120) return fail(400, "Pick a topic (up to 120 characters)");
       const n = count === 10 ? 10 : 5;
       return ok(await generateQuiz(name, topic.trim(), n, resolveModel(model)));
+    }),
+
+  // Interview practice: 15 or 20 scenario-based questions (no answers)
+  interviewGenerate: (rawName: unknown, topic: unknown, count: unknown, model?: unknown) =>
+    handle(async () => {
+      const { generateInterview } = await import("./interview.js");
+      const name = safeFileName(rawName);
+      if (typeof topic !== "string" || !topic.trim() || topic.length > 120) return fail(400, "Pick a topic (up to 120 characters)");
+      const n = count === 20 ? 20 : 15;
+      return ok(await generateInterview(name, topic.trim(), n, resolveModel(model)));
     }),
 
   // Quiz step 3: grade one short answer
@@ -128,6 +145,7 @@ export const api = {
       if ((await uploadMode()) === "disabled") return fail(400, "Deleting is not available here");
       const name = safeFileName(rawName);
       await (await getStore()).deleteDocument(name);
+      (await import("./quiz.js")).forgetTopics(name);
       return ok(await documentsBody({ deleted: name }));
     }),
 };

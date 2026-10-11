@@ -11,4 +11,11 @@ if (!LLM_API_KEY || LLM_API_KEY.startsWith("paste_")) {
   throw new Error("LLM_API_KEY is not set. Add it to .env locally, or to the host's environment variables.");
 }
 
-export const llm = new OpenAI({ baseURL: LLM_BASE_URL, apiKey: LLM_API_KEY });
+export const llm = new OpenAI({
+  baseURL: LLM_BASE_URL,
+  apiKey: LLM_API_KEY,
+  // Free tiers have per-minute token limits. By default the SDK silently waits and retries on
+  // "429 Too Many Requests", which looked like a 40+ second hang. Fail fast and explain instead.
+  maxRetries: 0,
+  timeout: 45_000,
+});

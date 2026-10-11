@@ -62,6 +62,8 @@ const ICON_PATHS = {
   chat: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z",
   quiz: "M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11",
   arrowLeft: "M19 12H5M11 18l-6-6 6-6",
+  arrowRight: "M5 12h14M13 6l6 6-6 6",
+  briefcase: "M4 7h16a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1zM9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M3 13h18",
   refresh: "M3 12a9 9 0 0 1 15.5-6.3L21 8M21 3v5h-5M21 12a9 9 0 0 1-15.5 6.3L3 16M3 21v-5h5",
   target: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 18a6 6 0 1 0 0-12 6 6 0 0 0 0 12zM12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4z",
   cpu: "M9 3v2M15 3v2M9 19v2M15 19v2M3 9h2M3 15h2M19 9h2M19 15h2M7 5h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM9 9h6v6H9z",
@@ -127,13 +129,15 @@ function ThemeToggle() {
 function useDocuments() {
   const [docs, setDocs] = useState([]);
   const [uploadMode, setUploadMode] = useState("disabled"); // "supabase" | "local" | "disabled"
+  const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState(null); // { type: "info" | "success" | "error", text }
 
   useEffect(() => {
     fetchJson("/api/documents")
       .then((d) => { setDocs(d.documents); setUploadMode(d.uploadMode); })
-      .catch((err) => setNotice({ type: "error", text: err.message }));
+      .catch((err) => setNotice({ type: "error", text: err.message }))
+      .finally(() => setLoaded(true));
   }, []);
 
   async function run(work) {
@@ -171,6 +175,7 @@ function useDocuments() {
         setNotice({ type: "info", text: `Reading and indexing ${file.name}…` });
         data = await fetchJson(`/api/documents?name=${encodeURIComponent(file.name)}`, { method: "POST", body: file });
       }
+      topicsCache.delete(data.indexed.name); // new content: suggest topics afresh
       setNotice({ type: "success", text: `Added ${data.indexed.name} · ${data.indexed.chunks} chunks` });
       return data;
     });
@@ -180,18 +185,19 @@ function useDocuments() {
     if (!confirm(`Remove "${name}" from the knowledge base?`)) return;
     run(async () => {
       const data = await fetchJson(`/api/documents?name=${encodeURIComponent(name)}`, { method: "DELETE" });
+      topicsCache.delete(name);
       setNotice({ type: "success", text: `Removed ${name}` });
       return data;
     });
   };
 
-  return { docs, uploadMode, canEdit: uploadMode !== "disabled", busy, notice, setNotice, upload, remove };
+  return { docs, loaded, uploadMode, canEdit: uploadMode !== "disabled", busy, notice, setNotice, upload, remove };
 }
 
 /* ---------- sidebar ---------- */
 
 function Sidebar({ documents, open, onClose, onNewChat }) {
-  const { docs, canEdit, busy, notice, setNotice, upload, remove } = documents;
+  const { docs, loaded, canEdit, busy, notice, setNotice, upload, remove } = documents;
   const fileRef = useRef(null);
 
   return (
@@ -218,7 +224,9 @@ function Sidebar({ documents, open, onClose, onNewChat }) {
           <span className="count">{docs.length}</span>
         </div>
 
-        {canEdit ? (
+        {!loaded ? (
+          <div className="dropzone skeleton-box" aria-busy="true" />
+        ) : canEdit ? (
           <button className={`dropzone ${busy ? "busy" : ""}`} onClick={() => fileRef.current.click()} disabled={busy}>
             {busy ? <span className="spinner" /> : <Icon name="upload" size={18} />}
             <span className="dz-title">{busy ? "Processing…" : "Upload a document"}</span>
@@ -250,7 +258,8 @@ function Sidebar({ documents, open, onClose, onNewChat }) {
               )}
             </li>
           ))}
-          {docs.length === 0 && <li className="empty-docs">No documents yet</li>}
+          {!loaded && [0, 1, 2].map((i) => <li key={i} className="doc-skeleton" aria-hidden="true" />)}
+          {loaded && docs.length === 0 && <li className="empty-docs">No documents yet</li>}
         </ul>
 
         <div className="sidebar-foot">
@@ -605,43 +614,159 @@ function QuizResults({ quiz, results, onRetry, onNewTopic, onNewDoc }) {
   );
 }
 
-function QuizView({ docs, models, model, onModel }) {
-  const [phase, setPhase] = useState("doc"); // doc -> topic -> question -> done
+/* ---------- shared: pick a document, then a topic ---------- */
+
+function DocPicker({ icon, iconClass, title, text, docs, loaded, onPick }) {
+  return (
+    <div className="welcome compact">
+      <span className={`quiz-icon ${iconClass ?? ""}`}><Icon name={icon} size={26} /></span>
+      <h1>{title}</h1>
+      <p>{text}</p>
+      <div className="doc-grid">
+        {docs.map((d) => (
+          <button key={d} className="doc-card" onClick={() => onPick(d)}>
+            <FileBadge name={d} />
+            <span className="doc-card-name">{d}</span>
+          </button>
+        ))}
+        {!loaded && [0, 1, 2, 3].map((i) => <div key={i} className="doc-card skeleton-box" aria-hidden="true" />)}
+        {loaded && docs.length === 0 && <p className="muted">Upload a document first.</p>}
+      </div>
+    </div>
+  );
+}
+
+// Topic suggestions per document, shared by Quiz and Interview so each document is read once
+const topicsCache = new Map();
+
+// Loads the AI's topic suggestions for a document (same endpoint for Quiz and Interview)
+function useTopics(model) {
   const [doc, setDoc] = useState(null);
   const [topics, setTopics] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  async function load(name) {
+    setDoc(name);
+    setError("");
+    if (topicsCache.has(name)) {
+      setTopics(topicsCache.get(name));
+      return;
+    }
+    setTopics([]);
+    setLoading(true);
+    try {
+      const d = await postJson("/api/quiz/topics", { name, model: model || undefined });
+      topicsCache.set(name, d.topics);
+      setTopics(d.topics);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+  return { doc, topics, loading, error, load };
+}
+
+function TopicStep({ doc, topics, loadingTopics, prompt, allTopicsOption, counts, count, onCount, onStart, starting, startLabel, startingLabel, error }) {
   const [topic, setTopic] = useState("");
   const [custom, setCustom] = useState("");
+  useEffect(() => { setTopic(allTopicsOption ? ALL_TOPICS : ""); setCustom(""); }, [doc]);
+  const chosen = custom.trim() || topic;
+  const cards = allTopicsOption
+    ? [{ title: ALL_TOPICS, description: "Questions from across the whole document." }, ...topics]
+    : topics;
+
+  return (
+    <div className="topic-step">
+      <div className="msg assistant">
+        <Logo size={30} />
+        <div className="msg-body">
+          <p className="ai-line">
+            {loadingTopics
+              ? <>Reading <strong>{doc}</strong>…</>
+              : <>I've read <strong>{doc}</strong>. <strong>{prompt}</strong></>}
+          </p>
+        </div>
+      </div>
+
+      {loadingTopics ? (
+        <div className="topic-grid">{[0, 1, 2, 3].map((i) => <div key={i} className="topic-card skeleton" />)}</div>
+      ) : (
+        <>
+          <div className="topic-grid">
+            {cards.map((t) => (
+              <button key={t.title} className={`topic-card ${topic === t.title && !custom ? "selected" : ""} ${t.title === ALL_TOPICS ? "all" : ""}`}
+                onClick={() => { setTopic(t.title); setCustom(""); }} disabled={starting}>
+                <span className="topic-title">{t.title}</span>
+                <span className="topic-desc">{t.description}</span>
+              </button>
+            ))}
+          </div>
+
+          <div className="topic-custom">
+            <input value={custom} onChange={(e) => setCustom(e.target.value)} maxLength={120}
+              placeholder="…or type your own topic" disabled={starting}
+              onKeyDown={(e) => { if (e.key === "Enter" && chosen) onStart(chosen); }} />
+          </div>
+
+          <div className="start-row">
+            <div className="segmented" role="radiogroup" aria-label="Number of questions">
+              {counts.map((n) => (
+                <button key={n} role="radio" aria-checked={count === n} className={count === n ? "active" : ""}
+                  onClick={() => onCount(n)} disabled={starting}>{n} questions</button>
+              ))}
+            </div>
+            <button className="primary-btn" onClick={() => onStart(chosen)} disabled={!chosen || starting}>
+              {starting ? <><span className="spinner small" /> {startingLabel}</> : startLabel}
+            </button>
+          </div>
+        </>
+      )}
+      {error && <div className="error-box"><Icon name="alert" size={16} /> {error}</div>}
+    </div>
+  );
+}
+
+const ALL_TOPICS = "All topics";
+
+function PracticeHeader({ phase, backLabel, onBack, busy, models, model, onModel }) {
+  return (
+    <div className="quiz-header">
+      {phase !== "doc" ? (
+        <button className="link-btn" onClick={onBack} disabled={busy}>
+          <Icon name="arrowLeft" size={14} /> {backLabel}
+        </button>
+      ) : <span />}
+      <ModelMenu models={models} value={model} onChange={onModel} disabled={busy} placement="down" />
+    </div>
+  );
+}
+
+/* ---------- quiz view ---------- */
+
+function QuizView({ docs, loaded, models, model, onModel }) {
+  const [phase, setPhase] = useState("doc"); // doc -> topic -> question -> done
+  const topicsState = useTopics(model);
   const [count, setCount] = useState(5);
-  const [loading, setLoading] = useState("");
+  const [starting, setStarting] = useState(false);
   const [error, setError] = useState("");
   const [quiz, setQuiz] = useState(null);
   const [index, setIndex] = useState(0);
   const [results, setResults] = useState([]);
 
-  async function pickDoc(name) {
-    setDoc(name);
+  function pickDoc(name) {
     setPhase("topic");
-    setTopics([]);
-    setTopic("");
-    setCustom("");
     setError("");
-    setLoading("topics");
-    try {
-      const d = await postJson("/api/quiz/topics", { name, model: model || undefined });
-      setTopics(d.topics);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading("");
-    }
+    topicsState.load(name);
   }
 
-  async function start(chosen = custom.trim() || topic) {
-    if (!chosen) return;
+  async function start(topic) {
+    if (!topic) return;
     setError("");
-    setLoading("quiz");
+    setStarting(true);
     try {
-      const d = await postJson("/api/quiz/generate", { name: doc, topic: chosen, count, model: model || undefined });
+      const d = await postJson("/api/quiz/generate", { name: topicsState.doc, topic, count, model: model || undefined });
       setQuiz(d);
       setIndex(0);
       setResults([]);
@@ -649,7 +774,7 @@ function QuizView({ docs, models, model, onModel }) {
     } catch (err) {
       setError(err.message);
     } finally {
-      setLoading("");
+      setStarting(false);
     }
   }
 
@@ -662,86 +787,22 @@ function QuizView({ docs, models, model, onModel }) {
     else setPhase("done");
   }
 
-  const header = (
-    <div className="quiz-header">
-      {phase !== "doc" ? (
-        <button className="link-btn" onClick={() => (phase === "topic" ? setPhase("doc") : setPhase("topic"))} disabled={!!loading}>
-          <Icon name="arrowLeft" size={14} /> {phase === "topic" ? "Documents" : "Topics"}
-        </button>
-      ) : <span />}
-      <ModelMenu models={models} value={model} onChange={onModel} disabled={!!loading} placement="down" />
-    </div>
-  );
-
   return (
     <div className="thread quiz">
-      {header}
+      <PracticeHeader phase={phase} busy={starting || topicsState.loading} models={models} model={model} onModel={onModel}
+        backLabel={phase === "topic" ? "Documents" : "Topics"} onBack={() => setPhase(phase === "topic" ? "doc" : "topic")} />
 
       {phase === "doc" && (
-        <div className="welcome compact">
-          <span className="quiz-icon"><Icon name="quiz" size={26} /></span>
-          <h1>Test your knowledge</h1>
-          <p>Pick a document. I'll read it, suggest topics, and quiz you with multiple-choice and short-answer questions.</p>
-          <div className="doc-grid">
-            {docs.map((d) => (
-              <button key={d} className="doc-card" onClick={() => pickDoc(d)}>
-                <FileBadge name={d} />
-                <span className="doc-card-name">{d}</span>
-              </button>
-            ))}
-            {docs.length === 0 && <p className="muted">Upload a document first.</p>}
-          </div>
-        </div>
+        <DocPicker icon="quiz" title="Test your knowledge" docs={docs} loaded={loaded} onPick={pickDoc}
+          text="Pick a document. I'll read it, suggest topics, and quiz you with multiple-choice and short-answer questions." />
       )}
 
       {phase === "topic" && (
-        <div className="topic-step">
-          <div className="msg assistant">
-            <Logo size={30} />
-            <div className="msg-body">
-              <p className="ai-line">
-                {loading === "topics"
-                  ? <>Reading <strong>{doc}</strong>…</>
-                  : <>I've read <strong>{doc}</strong>. <strong>Which topic would you like to be quizzed on?</strong></>}
-              </p>
-            </div>
-          </div>
-
-          {loading === "topics" ? (
-            <div className="topic-grid">{[0, 1, 2, 3].map((i) => <div key={i} className="topic-card skeleton" />)}</div>
-          ) : (
-            <>
-              <div className="topic-grid">
-                {topics.map((t) => (
-                  <button key={t.title} className={`topic-card ${topic === t.title && !custom ? "selected" : ""}`}
-                    onClick={() => { setTopic(t.title); setCustom(""); }} disabled={loading === "quiz"}>
-                    <span className="topic-title">{t.title}</span>
-                    <span className="topic-desc">{t.description}</span>
-                  </button>
-                ))}
-              </div>
-
-              <div className="topic-custom">
-                <input value={custom} onChange={(e) => setCustom(e.target.value)} maxLength={120}
-                  placeholder="…or type your own topic" disabled={loading === "quiz"}
-                  onKeyDown={(e) => { if (e.key === "Enter") start(); }} />
-              </div>
-
-              <div className="start-row">
-                <div className="segmented" role="radiogroup" aria-label="Number of questions">
-                  {[5, 10].map((n) => (
-                    <button key={n} role="radio" aria-checked={count === n} className={count === n ? "active" : ""}
-                      onClick={() => setCount(n)} disabled={loading === "quiz"}>{n} questions</button>
-                  ))}
-                </div>
-                <button className="primary-btn" onClick={() => start()} disabled={!(custom.trim() || topic) || loading === "quiz"}>
-                  {loading === "quiz" ? <><span className="spinner small" /> Writing questions…</> : "Start quiz"}
-                </button>
-              </div>
-            </>
-          )}
-          {error && <div className="error-box"><Icon name="alert" size={16} /> {error}</div>}
-        </div>
+        <TopicStep doc={topicsState.doc} topics={topicsState.topics} loadingTopics={topicsState.loading}
+          prompt="Which topic would you like to be quizzed on?"
+          counts={[5, 10]} count={count} onCount={setCount}
+          onStart={start} starting={starting} startLabel="Start quiz" startingLabel="Writing questions…"
+          error={topicsState.error || error} />
       )}
 
       {phase === "question" && quiz && (
@@ -754,8 +815,165 @@ function QuizView({ docs, models, model, onModel }) {
           onNewTopic={() => setPhase("topic")}
           onNewDoc={() => setPhase("doc")} />
       )}
-      {phase === "done" && loading === "quiz" && <div className="thinking center"><span className="dots"><i /><i /><i /></span> Writing new questions…</div>}
+      {phase === "done" && starting && <div className="thinking center"><span className="dots"><i /><i /><i /></span> Writing new questions…</div>}
       {phase === "done" && error && <div className="error-box"><Icon name="alert" size={16} /> {error}</div>}
+    </div>
+  );
+}
+
+/* ---------- interview view ---------- */
+
+function InterviewSession({ session, index, onIndex, onFinish }) {
+  const total = session.questions.length;
+  const q = session.questions[index];
+  const isLast = index === total - 1;
+  const cardRef = useRef(null);
+
+  // ← / → keys move between questions: only while this view is on screen, never while typing
+  useEffect(() => {
+    function onKey(e) {
+      if (!cardRef.current || cardRef.current.offsetParent === null) return; // Interview tab hidden
+      if (e.target instanceof Element && e.target.closest("input, textarea, select, [contenteditable]")) return;
+      if (e.key === "ArrowRight" && !isLast) onIndex(index + 1);
+      if (e.key === "ArrowLeft" && index > 0) onIndex(index - 1);
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [index, isLast]);
+
+  return (
+    <div className="quiz-card interview-card" key={index} ref={cardRef}>
+      <div className="quiz-progress">
+        <div className="quiz-progress-text">
+          <span>Question {index + 1} of {total}</span>
+          <span className="interview-tags">
+            {q.focus && <span className="type-badge focus">{q.focus}</span>}
+            <span className={`type-badge level-${q.level.toLowerCase()}`}>{q.level}</span>
+          </span>
+        </div>
+        <div className="progress-track"><span style={{ width: `${((index + 1) / total) * 100}%` }} /></div>
+      </div>
+
+      <div className="scenario-label"><Icon name="briefcase" size={14} /> Scenario</div>
+      <p className="scenario">{q.question}</p>
+      <p className="scenario-tip">Take a moment, then answer out loud as you would in the interview.</p>
+
+      <div className="interview-nav">
+        <button className="ghost-btn" onClick={() => onIndex(index - 1)} disabled={index === 0}>
+          <Icon name="arrowLeft" size={15} /> Previous
+        </button>
+        <div className="dots-nav" aria-label="Jump to question">
+          {session.questions.map((_, i) => (
+            <button key={i} className={`dot ${i === index ? "active" : ""}`} onClick={() => onIndex(i)}
+              aria-label={`Question ${i + 1}`} aria-current={i === index} />
+          ))}
+        </div>
+        {isLast ? (
+          <button className="primary-btn" onClick={onFinish}>Finish</button>
+        ) : (
+          <button className="primary-btn" onClick={() => onIndex(index + 1)}>
+            Next <Icon name="arrowRight" size={15} />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function InterviewSummary({ session, onJump, onNewSet, onNewTopic, onNewDoc }) {
+  return (
+    <div className="quiz-card interview-summary">
+      <div className="summary-head">
+        <span className="quiz-icon interview small"><Icon name="check" size={20} /></span>
+        <div>
+          <h2>Practice complete</h2>
+          <p className="muted">{session.questions.length} questions · {session.topic} · {session.name}</p>
+        </div>
+      </div>
+      <ol className="question-list">
+        {session.questions.map((q, i) => (
+          <li key={i}>
+            <button onClick={() => onJump(i)}>
+              <span className="ql-n">{i + 1}</span>
+              <span className="ql-text">{q.question}</span>
+              <span className={`type-badge level-${q.level.toLowerCase()}`}>{q.level}</span>
+            </button>
+          </li>
+        ))}
+      </ol>
+      <div className="results-actions">
+        <button className="primary-btn" onClick={onNewSet}><Icon name="refresh" size={15} /> New set, same topic</button>
+        <button className="ghost-btn" onClick={onNewTopic}>Choose another topic</button>
+        <button className="ghost-btn" onClick={onNewDoc}>Another document</button>
+      </div>
+    </div>
+  );
+}
+
+function InterviewView({ docs, loaded, models, model, onModel }) {
+  const [phase, setPhase] = useState("doc"); // doc -> topic -> session -> summary
+  const topicsState = useTopics(model);
+  const [count, setCount] = useState(15);
+  const [starting, setStarting] = useState(false);
+  const [error, setError] = useState("");
+  const [session, setSession] = useState(null);
+  const [index, setIndex] = useState(0);
+
+  function pickDoc(name) {
+    setPhase("topic");
+    setError("");
+    topicsState.load(name);
+  }
+
+  async function start(topic) {
+    if (!topic) return;
+    setError("");
+    setStarting(true);
+    try {
+      const d = await postJson("/api/interview/generate", { name: topicsState.doc, topic, count, model: model || undefined });
+      setSession(d);
+      setIndex(0);
+      setPhase("session");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  const back = { topic: ["Documents", "doc"], session: ["Topics", "topic"], summary: ["Topics", "topic"] }[phase] ?? ["", "doc"];
+
+  return (
+    <div className="thread quiz">
+      <PracticeHeader phase={phase} busy={starting || topicsState.loading} models={models} model={model} onModel={onModel}
+        backLabel={back[0]} onBack={() => setPhase(back[1])} />
+
+      {phase === "doc" && (
+        <DocPicker icon="briefcase" iconClass="interview" title="Interview practice" docs={docs} loaded={loaded} onPick={pickDoc}
+          text="Pick a document. I'll turn it into 15–20 real-world, scenario-based interview questions. Answer each one out loud, then move on." />
+      )}
+
+      {phase === "topic" && (
+        <TopicStep doc={topicsState.doc} topics={topicsState.topics} loadingTopics={topicsState.loading}
+          prompt="Which topic should the interview focus on?" allTopicsOption
+          counts={[15, 20]} count={count} onCount={setCount}
+          onStart={start} starting={starting} startLabel="Start interview" startingLabel="Preparing scenarios…"
+          error={topicsState.error || error} />
+      )}
+
+      {phase === "session" && session && (
+        <InterviewSession session={session} index={index} onIndex={setIndex} onFinish={() => setPhase("summary")} />
+      )}
+
+      {phase === "summary" && session && (
+        <InterviewSummary session={session}
+          onJump={(i) => { setIndex(i); setPhase("session"); }}
+          onNewSet={() => start(session.topic)}
+          onNewTopic={() => setPhase("topic")}
+          onNewDoc={() => setPhase("doc")} />
+      )}
+      {phase === "summary" && starting && <div className="thinking center"><span className="dots"><i /><i /><i /></span> Preparing a new set…</div>}
+      {phase === "summary" && error && <div className="error-box"><Icon name="alert" size={16} /> {error}</div>}
     </div>
   );
 }
@@ -777,7 +995,7 @@ function App() {
   const [model, setModel] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [dragging, setDragging] = useState(false);
-  const [mode, setMode] = useState("chat"); // "chat" | "quiz"
+  const [mode, setMode] = useState("chat"); // "chat" | "quiz" | "interview"
   const bottomRef = useRef(null);
 
   useEffect(() => {
@@ -844,10 +1062,13 @@ function App() {
           <button className="icon-btn only-mobile" onClick={() => setSidebarOpen(true)} aria-label="Open menu"><Icon name="menu" /></button>
           <div className="mode-switch" role="tablist" aria-label="Mode">
             <button role="tab" aria-selected={mode === "chat"} className={mode === "chat" ? "active" : ""} onClick={() => setMode("chat")}>
-              <Icon name="chat" size={15} /> Chat
+              <Icon name="chat" size={15} /> <span className="tab-label">Chat</span>
             </button>
             <button role="tab" aria-selected={mode === "quiz"} className={mode === "quiz" ? "active" : ""} onClick={() => setMode("quiz")}>
-              <Icon name="quiz" size={15} /> Quiz
+              <Icon name="quiz" size={15} /> <span className="tab-label">Quiz</span>
+            </button>
+            <button role="tab" aria-selected={mode === "interview"} className={mode === "interview" ? "active" : ""} onClick={() => setMode("interview")}>
+              <Icon name="briefcase" size={15} /> <span className="tab-label">Interview</span>
             </button>
           </div>
           <div className="topbar-actions">
@@ -860,7 +1081,11 @@ function App() {
 
         {/* Quiz stays mounted while hidden, so switching to Chat and back keeps your progress */}
         <div className="scroll" hidden={mode !== "quiz"}>
-          <QuizView docs={documents.docs} models={models} model={model} onModel={chooseModel} />
+          <QuizView docs={documents.docs} loaded={documents.loaded} models={models} model={model} onModel={chooseModel} />
+        </div>
+
+        <div className="scroll" hidden={mode !== "interview"}>
+          <InterviewView docs={documents.docs} loaded={documents.loaded} models={models} model={model} onModel={chooseModel} />
         </div>
 
         <div className="scroll" hidden={mode !== "chat"}>

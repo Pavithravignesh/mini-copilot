@@ -60,6 +60,10 @@ async function route(req: http.IncomingMessage, url: URL): Promise<ApiResult | n
       const body = await readJson(req);
       return api.quizGenerate(body.name, body.topic, body.count, body.model);
     }
+    case "POST /api/interview/generate": {
+      const body = await readJson(req);
+      return api.interviewGenerate(body.name, body.topic, body.count, body.model);
+    }
     case "POST /api/quiz/grade": {
       const body = await readJson(req);
       return api.quizGrade(body, body.model);
