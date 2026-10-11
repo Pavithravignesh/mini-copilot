@@ -14,6 +14,7 @@ export interface Store {
   saveDocument(name: string, chunks: StoredChunk[]): Promise<void>; // replaces any document with the same name
   deleteDocument(name: string): Promise<void>;
   search(queryEmbedding: number[], topK: number): Promise<SearchResult[]>;
+  getDocumentChunks(name: string): Promise<RawChunk[]>; // all chunks of one document, in reading order
   readUploadedFile(name: string): Promise<Buffer>; // the original file, for (re)indexing
 }
 

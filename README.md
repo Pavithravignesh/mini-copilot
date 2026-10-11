@@ -20,6 +20,7 @@ Everything runs on **free tiers**: [Groq](https://console.groq.com) for the LLM,
 
 - Chat in the browser with answers that cite their sources
 - **Upload PDF, Word (.docx), .txt and .md** files (up to 10 MB); they are indexed automatically
+- **Quiz mode**: pick a document, the AI suggests topics ("Which topic would you like to be quizzed on?"), then asks 5 or 10 multiple-choice and short-answer questions one at a time, grades short answers, and shows a score with review
 - **Model picker**: switch between GPT-OSS 120B, GPT-OSS 20B and Qwen 3.8 27B; each answer shows the model, time and tokens used
 - "Show sources" reveals the exact chunks used and their similarity scores
 - Refuses to guess: if the documents don't contain the answer, it says so
@@ -43,6 +44,19 @@ ANSWERING (every question)
     -> prompt with sources    lib/rag.ts
     -> LLM answer + [n]       lib/llm.ts          (any OpenAI-compatible API)
 ```
+
+### Quiz mode
+
+```
+1. TOPICS    24 chunks sampled evenly across the document -> LLM -> 4-8 topics (JSON)
+2. QUESTIONS topic -> vector -> the document's 8 closest chunks -> LLM -> N questions (JSON),
+             each tied to the source chunk it came from
+3. GRADING   multiple choice: checked in the browser
+             short answer: LLM compares the answer with the reference answer + source passage
+             -> correct / partial / incorrect + feedback
+```
+
+All quiz logic is in [`lib/quiz.ts`](lib/quiz.ts). Questions come only from the chosen document; a topic the document doesn't cover is rejected.
 
 ### Uploads in production
 
@@ -132,6 +146,9 @@ mini-copilot/
 | --- | --- | --- | --- |
 | `POST` | `/api/chat` | `{ "question": "...", "model"?: "..." }` | `{ answer, sources[], model, seconds, tokens }` |
 | `GET` | `/api/models` | — | `{ models[], default }` |
+| `POST` | `/api/quiz/topics` | `{ "name": "file.pdf" }` | `{ name, topics[] }` |
+| `POST` | `/api/quiz/generate` | `{ "name", "topic", "count": 5 \| 10 }` | `{ topic, questions[], sources[] }` |
+| `POST` | `/api/quiz/grade` | `{ "question", "answer", "userAnswer", "source" }` | `{ verdict, feedback }` |
 | `GET` | `/api/documents` | — | `{ documents[], uploadMode }` |
 | `DELETE` | `/api/documents?name=file.pdf` | — | `{ documents[], deleted }` |
 | `POST` | `/api/upload-url` | `{ "name": "file.pdf" }` | `{ name, uploadUrl }` (Supabase) |

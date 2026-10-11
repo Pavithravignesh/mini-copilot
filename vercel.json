@@ -3,7 +3,7 @@
   "buildCommand": "npm run vercel-build",
   "outputDirectory": "public",
   "functions": {
-    "api/*.js": {
+    "api/**/*.js": {
       "maxDuration": 60,
       "includeFiles": "{data,storage}/**"
     }

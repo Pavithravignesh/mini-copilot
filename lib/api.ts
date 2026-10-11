@@ -56,6 +56,35 @@ export const api = {
 
   models: () => handle(async () => ok({ models: MODELS, default: DEFAULT_MODEL })),
 
+  // Quiz step 1: topics the AI suggests for one document
+  quizTopics: (rawName: unknown, model?: unknown) =>
+    handle(async () => {
+      const { suggestTopics } = await import("./quiz.js");
+      const name = safeFileName(rawName);
+      return ok({ name, topics: await suggestTopics(name, resolveModel(model)) });
+    }),
+
+  // Quiz step 2: questions on the chosen topic (5 or 10)
+  quizGenerate: (rawName: unknown, topic: unknown, count: unknown, model?: unknown) =>
+    handle(async () => {
+      const { generateQuiz } = await import("./quiz.js");
+      const name = safeFileName(rawName);
+      if (typeof topic !== "string" || !topic.trim() || topic.length > 120) return fail(400, "Pick a topic (up to 120 characters)");
+      const n = count === 10 ? 10 : 5;
+      return ok(await generateQuiz(name, topic.trim(), n, resolveModel(model)));
+    }),
+
+  // Quiz step 3: grade one short answer
+  quizGrade: (body: any, model?: unknown) =>
+    handle(async () => {
+      const { gradeAnswer } = await import("./quiz.js");
+      const fields = ["question", "answer", "userAnswer", "source"] as const;
+      if (!body || fields.some((f) => typeof body[f] !== "string") || body.userAnswer.length > 2000) {
+        return fail(400, "question, answer, userAnswer and source are required (answer up to 2000 characters)");
+      }
+      return ok(await gradeAnswer(body, resolveModel(model)));
+    }),
+
   listDocuments: () => handle(async () => ok(await documentsBody())),
 
   // Supabase mode, step 1: a one-time URL the browser uploads the file to

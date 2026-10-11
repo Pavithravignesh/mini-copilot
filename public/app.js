@@ -59,6 +59,11 @@ const ICON_PATHS = {
   moon: "M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z",
   monitor: "M3 4h18v12H3zM8 20h8M12 16v4",
   chevronDown: "M6 9l6 6 6-6",
+  chat: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z",
+  quiz: "M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11",
+  arrowLeft: "M19 12H5M11 18l-6-6 6-6",
+  refresh: "M3 12a9 9 0 0 1 15.5-6.3L21 8M21 3v5h-5M21 12a9 9 0 0 1-15.5 6.3L3 16M3 21v-5h5",
+  target: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 18a6 6 0 1 0 0-12 6 6 0 0 0 0 12zM12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4z",
   cpu: "M9 3v2M15 3v2M9 19v2M15 19v2M3 9h2M3 15h2M19 9h2M19 15h2M7 5h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM9 9h6v6H9z",
 };
 
@@ -358,7 +363,7 @@ function Thinking() {
 /* ---------- model menu ---------- */
 
 // A custom dropdown: pill button + popover card listing each model with its description
-function ModelMenu({ models, value, onChange, disabled }) {
+function ModelMenu({ models, value, onChange, disabled, placement = "up" }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
   const current = models.find((m) => m.id === value) ?? models[0];
@@ -383,7 +388,7 @@ function ModelMenu({ models, value, onChange, disabled }) {
         <Icon name="chevronDown" size={14} className="chevron" />
       </button>
       {open && (
-        <div className="model-popover" role="listbox" aria-label="Model">
+        <div className={`model-popover ${placement}`} role="listbox" aria-label="Model">
           <div className="popover-label">Model</div>
           {models.map((m) => (
             <button type="button" key={m.id} role="option" aria-selected={m.id === current.id}
@@ -446,6 +451,315 @@ function Composer({ onSend, loading, models, model, onModel }) {
   );
 }
 
+/* ---------- quiz ---------- */
+
+const LETTERS = ["A", "B", "C", "D"];
+const POINTS = { correct: 1, partial: 0.5, incorrect: 0 };
+
+function SourcePassage({ source }) {
+  const [open, setOpen] = useState(false);
+  if (!source) return null;
+  return (
+    <div className="passage">
+      <button className="link-btn" onClick={() => setOpen(!open)}>
+        <Icon name="book" size={13} /> {open ? "Hide" : "Show"} source passage
+      </button>
+      {open && (
+        <div className="source-card">
+          <div className="source-card-head"><span className="source-heading">{source.heading}</span></div>
+          <p>{source.text}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function QuizQuestion({ quiz, index, result, onResult, onNext, model }) {
+  const q = quiz.questions[index];
+  const source = quiz.sources[q.source - 1];
+  const [text, setText] = useState("");
+  const [grading, setGrading] = useState(false);
+  const [error, setError] = useState("");
+  const isLast = index === quiz.questions.length - 1;
+
+  useEffect(() => { setText(""); setError(""); }, [index]);
+
+  async function checkShort() {
+    if (!text.trim() || grading) return;
+    setGrading(true);
+    setError("");
+    try {
+      const g = await postJson("/api/quiz/grade", {
+        question: q.question, answer: q.answer, userAnswer: text.trim(), source: source?.text ?? "", model: model || undefined,
+      });
+      onResult({ verdict: g.verdict, feedback: g.feedback, userAnswer: text.trim() });
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setGrading(false);
+    }
+  }
+
+  const verdictLabel = { correct: "Correct", partial: "Partly right", incorrect: "Not quite" };
+
+  return (
+    <div className="quiz-card">
+      <div className="quiz-progress">
+        <div className="quiz-progress-text">
+          <span>Question {index + 1} of {quiz.questions.length}</span>
+          <span className={`type-badge ${q.type}`}>{q.type === "mcq" ? "Multiple choice" : "Short answer"}</span>
+        </div>
+        <div className="progress-track">
+          <span style={{ width: `${((index + (result ? 1 : 0)) / quiz.questions.length) * 100}%` }} />
+        </div>
+      </div>
+
+      <h2 className="quiz-question">{q.question}</h2>
+
+      {q.type === "mcq" ? (
+        <div className="options">
+          {q.options.map((opt, i) => {
+            const state = !result ? "" : i === q.answer ? "right" : i === result.chosen ? "wrong" : "dim";
+            return (
+              <button key={i} className={`option ${state}`} disabled={!!result}
+                onClick={() => onResult({ chosen: i, verdict: i === q.answer ? "correct" : "incorrect" })}>
+                <span className="option-letter">{LETTERS[i]}</span>
+                <span className="option-text">{opt}</span>
+                {state === "right" && <Icon name="check" size={16} />}
+                {state === "wrong" && <Icon name="x" size={16} />}
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="short-answer">
+          <textarea value={result ? result.userAnswer : text} onChange={(e) => setText(e.target.value)} disabled={!!result || grading}
+            placeholder="Type your answer in a sentence or two…" rows={3}
+            onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) checkShort(); }} />
+          {!result && (
+            <div className="short-actions">
+              <span className="hint">Ctrl + Enter to submit</span>
+              <button className="primary-btn" onClick={checkShort} disabled={!text.trim() || grading}>
+                {grading ? <><span className="spinner small" /> Checking…</> : "Check answer"}
+              </button>
+            </div>
+          )}
+          {error && <div className="error-box"><Icon name="alert" size={16} /> {error}</div>}
+        </div>
+      )}
+
+      {result && (
+        <div className={`feedback ${result.verdict}`}>
+          <div className="feedback-head">
+            <Icon name={result.verdict === "correct" ? "check" : result.verdict === "partial" ? "target" : "x"} size={16} />
+            {verdictLabel[result.verdict]}
+          </div>
+          {result.feedback && <p>{result.feedback}</p>}
+          {q.type === "short" && <p><strong>Model answer:</strong> {q.answer}</p>}
+          {q.explanation && <p className="explanation">{q.explanation}</p>}
+          <SourcePassage source={source} />
+        </div>
+      )}
+
+      {result && (
+        <div className="quiz-nav">
+          <button className="primary-btn" onClick={onNext}>{isLast ? "See results" : "Next question"}</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function QuizResults({ quiz, results, onRetry, onNewTopic, onNewDoc }) {
+  const score = results.reduce((s, r) => s + POINTS[r.verdict], 0);
+  const pct = Math.round((score / quiz.questions.length) * 100);
+  const message = pct >= 80 ? "Excellent work!" : pct >= 50 ? "Good effort. Review the ones you missed." : "Worth another read. Try again!";
+  return (
+    <div className="quiz-card results">
+      <div className="score-ring" style={{ "--pct": pct }}>
+        <div className="score-inner">
+          <span className="score-num">{score % 1 ? score.toFixed(1) : score}<small>/{quiz.questions.length}</small></span>
+          <span className="score-pct">{pct}%</span>
+        </div>
+      </div>
+      <h2>{message}</h2>
+      <p className="muted">Topic: {quiz.topic}</p>
+
+      <ol className="review">
+        {quiz.questions.map((q, i) => (
+          <li key={i} className={results[i].verdict}>
+            <span className="review-mark">
+              <Icon name={results[i].verdict === "correct" ? "check" : results[i].verdict === "partial" ? "target" : "x"} size={14} />
+            </span>
+            <span>{q.question}</span>
+          </li>
+        ))}
+      </ol>
+
+      <div className="results-actions">
+        <button className="primary-btn" onClick={onRetry}><Icon name="refresh" size={15} /> New questions, same topic</button>
+        <button className="ghost-btn" onClick={onNewTopic}>Choose another topic</button>
+        <button className="ghost-btn" onClick={onNewDoc}>Another document</button>
+      </div>
+    </div>
+  );
+}
+
+function QuizView({ docs, models, model, onModel }) {
+  const [phase, setPhase] = useState("doc"); // doc -> topic -> question -> done
+  const [doc, setDoc] = useState(null);
+  const [topics, setTopics] = useState([]);
+  const [topic, setTopic] = useState("");
+  const [custom, setCustom] = useState("");
+  const [count, setCount] = useState(5);
+  const [loading, setLoading] = useState("");
+  const [error, setError] = useState("");
+  const [quiz, setQuiz] = useState(null);
+  const [index, setIndex] = useState(0);
+  const [results, setResults] = useState([]);
+
+  async function pickDoc(name) {
+    setDoc(name);
+    setPhase("topic");
+    setTopics([]);
+    setTopic("");
+    setCustom("");
+    setError("");
+    setLoading("topics");
+    try {
+      const d = await postJson("/api/quiz/topics", { name, model: model || undefined });
+      setTopics(d.topics);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading("");
+    }
+  }
+
+  async function start(chosen = custom.trim() || topic) {
+    if (!chosen) return;
+    setError("");
+    setLoading("quiz");
+    try {
+      const d = await postJson("/api/quiz/generate", { name: doc, topic: chosen, count, model: model || undefined });
+      setQuiz(d);
+      setIndex(0);
+      setResults([]);
+      setPhase("question");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading("");
+    }
+  }
+
+  function record(result) {
+    setResults((r) => { const next = [...r]; next[index] = result; return next; });
+  }
+
+  function next() {
+    if (index < quiz.questions.length - 1) setIndex(index + 1);
+    else setPhase("done");
+  }
+
+  const header = (
+    <div className="quiz-header">
+      {phase !== "doc" ? (
+        <button className="link-btn" onClick={() => (phase === "topic" ? setPhase("doc") : setPhase("topic"))} disabled={!!loading}>
+          <Icon name="arrowLeft" size={14} /> {phase === "topic" ? "Documents" : "Topics"}
+        </button>
+      ) : <span />}
+      <ModelMenu models={models} value={model} onChange={onModel} disabled={!!loading} placement="down" />
+    </div>
+  );
+
+  return (
+    <div className="thread quiz">
+      {header}
+
+      {phase === "doc" && (
+        <div className="welcome compact">
+          <span className="quiz-icon"><Icon name="quiz" size={26} /></span>
+          <h1>Test your knowledge</h1>
+          <p>Pick a document. I'll read it, suggest topics, and quiz you with multiple-choice and short-answer questions.</p>
+          <div className="doc-grid">
+            {docs.map((d) => (
+              <button key={d} className="doc-card" onClick={() => pickDoc(d)}>
+                <FileBadge name={d} />
+                <span className="doc-card-name">{d}</span>
+              </button>
+            ))}
+            {docs.length === 0 && <p className="muted">Upload a document first.</p>}
+          </div>
+        </div>
+      )}
+
+      {phase === "topic" && (
+        <div className="topic-step">
+          <div className="msg assistant">
+            <Logo size={30} />
+            <div className="msg-body">
+              <p className="ai-line">
+                {loading === "topics"
+                  ? <>Reading <strong>{doc}</strong>…</>
+                  : <>I've read <strong>{doc}</strong>. <strong>Which topic would you like to be quizzed on?</strong></>}
+              </p>
+            </div>
+          </div>
+
+          {loading === "topics" ? (
+            <div className="topic-grid">{[0, 1, 2, 3].map((i) => <div key={i} className="topic-card skeleton" />)}</div>
+          ) : (
+            <>
+              <div className="topic-grid">
+                {topics.map((t) => (
+                  <button key={t.title} className={`topic-card ${topic === t.title && !custom ? "selected" : ""}`}
+                    onClick={() => { setTopic(t.title); setCustom(""); }} disabled={loading === "quiz"}>
+                    <span className="topic-title">{t.title}</span>
+                    <span className="topic-desc">{t.description}</span>
+                  </button>
+                ))}
+              </div>
+
+              <div className="topic-custom">
+                <input value={custom} onChange={(e) => setCustom(e.target.value)} maxLength={120}
+                  placeholder="…or type your own topic" disabled={loading === "quiz"}
+                  onKeyDown={(e) => { if (e.key === "Enter") start(); }} />
+              </div>
+
+              <div className="start-row">
+                <div className="segmented" role="radiogroup" aria-label="Number of questions">
+                  {[5, 10].map((n) => (
+                    <button key={n} role="radio" aria-checked={count === n} className={count === n ? "active" : ""}
+                      onClick={() => setCount(n)} disabled={loading === "quiz"}>{n} questions</button>
+                  ))}
+                </div>
+                <button className="primary-btn" onClick={() => start()} disabled={!(custom.trim() || topic) || loading === "quiz"}>
+                  {loading === "quiz" ? <><span className="spinner small" /> Writing questions…</> : "Start quiz"}
+                </button>
+              </div>
+            </>
+          )}
+          {error && <div className="error-box"><Icon name="alert" size={16} /> {error}</div>}
+        </div>
+      )}
+
+      {phase === "question" && quiz && (
+        <QuizQuestion quiz={quiz} index={index} result={results[index]} onResult={record} onNext={next} model={model} />
+      )}
+
+      {phase === "done" && quiz && (
+        <QuizResults quiz={quiz} results={results}
+          onRetry={() => start(quiz.topic)}
+          onNewTopic={() => setPhase("topic")}
+          onNewDoc={() => setPhase("doc")} />
+      )}
+      {phase === "done" && loading === "quiz" && <div className="thinking center"><span className="dots"><i /><i /><i /></span> Writing new questions…</div>}
+      {phase === "done" && error && <div className="error-box"><Icon name="alert" size={16} /> {error}</div>}
+    </div>
+  );
+}
+
 /* ---------- app ---------- */
 
 const SUGGESTIONS = [
@@ -463,6 +777,7 @@ function App() {
   const [model, setModel] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [mode, setMode] = useState("chat"); // "chat" | "quiz"
   const bottomRef = useRef(null);
 
   useEffect(() => {
@@ -503,6 +818,7 @@ function App() {
 
   function newChat() {
     setMessages([]);
+    setMode("chat");
     setSidebarOpen(false);
   }
 
@@ -526,16 +842,28 @@ function App() {
       <main className="main">
         <header className="topbar">
           <button className="icon-btn only-mobile" onClick={() => setSidebarOpen(true)} aria-label="Open menu"><Icon name="menu" /></button>
-          <span className="topbar-title">{messages.length ? "Chat" : ""}</span>
+          <div className="mode-switch" role="tablist" aria-label="Mode">
+            <button role="tab" aria-selected={mode === "chat"} className={mode === "chat" ? "active" : ""} onClick={() => setMode("chat")}>
+              <Icon name="chat" size={15} /> Chat
+            </button>
+            <button role="tab" aria-selected={mode === "quiz"} className={mode === "quiz" ? "active" : ""} onClick={() => setMode("quiz")}>
+              <Icon name="quiz" size={15} /> Quiz
+            </button>
+          </div>
           <div className="topbar-actions">
-            {messages.length > 0 && (
+            {mode === "chat" && messages.length > 0 && (
               <button className="ghost-btn" onClick={newChat}><Icon name="plus" size={15} /> New chat</button>
             )}
             <ThemeToggle />
           </div>
         </header>
 
-        <div className="scroll">
+        {/* Quiz stays mounted while hidden, so switching to Chat and back keeps your progress */}
+        <div className="scroll" hidden={mode !== "quiz"}>
+          <QuizView docs={documents.docs} models={models} model={model} onModel={chooseModel} />
+        </div>
+
+        <div className="scroll" hidden={mode !== "chat"}>
           <div className="thread">
             {messages.length === 0 ? (
               <div className="welcome">
@@ -566,7 +894,7 @@ function App() {
           </div>
         </div>
 
-        <Composer onSend={send} loading={loading} models={models} model={model} onModel={chooseModel} />
+        {mode === "chat" && <Composer onSend={send} loading={loading} models={models} model={model} onModel={chooseModel} />}
       </main>
 
       {dragging && (

@@ -2,6 +2,9 @@
 // Routes (same as the Vercel functions in api/):
 //   POST   /api/chat           { question, model? }  -> { answer, sources, model, seconds, tokens }
 //   GET    /api/models                                -> { models, default }
+//   POST   /api/quiz/topics    { name, model? }       -> { name, topics }
+//   POST   /api/quiz/generate  { name, topic, count, model? } -> { topic, questions, sources }
+//   POST   /api/quiz/grade     { question, answer, userAnswer, source, model? } -> { verdict, feedback }
 //   GET    /api/documents                              -> { documents, uploadMode }
 //   POST   /api/documents?name=x.pdf     raw bytes     -> local mode upload
 //   DELETE /api/documents?name=x.pdf                   -> remove a document
@@ -49,6 +52,18 @@ async function route(req: http.IncomingMessage, url: URL): Promise<ApiResult | n
     }
     case "GET /api/models":
       return api.models();
+    case "POST /api/quiz/topics": {
+      const body = await readJson(req);
+      return api.quizTopics(body.name, body.model);
+    }
+    case "POST /api/quiz/generate": {
+      const body = await readJson(req);
+      return api.quizGenerate(body.name, body.topic, body.count, body.model);
+    }
+    case "POST /api/quiz/grade": {
+      const body = await readJson(req);
+      return api.quizGrade(body, body.model);
+    }
     case "GET /api/documents":
       return api.listDocuments();
     case "POST /api/documents":

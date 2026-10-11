@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Store, StoredChunk, SearchResult } from "../store.js";
+import { cosineSimilarity } from "../embeddings.js";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const STORE_PATH = path.join(process.cwd(), "storage", "vectors.json");
@@ -16,16 +17,6 @@ function save(chunks: StoredChunk[]): void {
   fs.writeFileSync(STORE_PATH, JSON.stringify(chunks));
 }
 
-// cosine similarity = dot(a, b) / (|a| * |b|), from -1 (opposite) to 1 (same words)
-export function cosineSimilarity(a: number[], b: number[]): number {
-  let dot = 0, normA = 0, normB = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
-  }
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB) || 1);
-}
 
 export const localStore: Store = {
   mode: "local",
@@ -48,6 +39,12 @@ export const localStore: Store = {
       .map(({ embedding, ...chunk }): SearchResult => ({ ...chunk, score: cosineSimilarity(queryEmbedding, embedding) }))
       .sort((a, b) => b.score - a.score)
       .slice(0, topK);
+  },
+
+  async getDocumentChunks(name) {
+    return load()
+      .filter((c) => c.source === name)
+      .map(({ embedding, ...chunk }) => chunk);
   },
 
   async readUploadedFile(name) {

@@ -53,6 +53,25 @@ export const supabaseStore: Store = {
     return rows.map((r) => ({ source: r.source, heading: r.heading, text: r.content, score: r.score }));
   },
 
+  async getDocumentChunks(name) {
+    const doc = await supabase.from("documents").select("id").eq("name", name).maybeSingle();
+    if (doc.error) throw new Error(`Supabase find document failed: ${doc.error.message}`);
+    if (!doc.data) return [];
+
+    // Supabase returns at most 1000 rows per request, so read big documents page by page
+    const chunks = [];
+    for (let from = 0; ; from += 1000) {
+      const page = check(
+        await supabase.from("chunks").select("heading, content").eq("document_id", doc.data.id)
+          .order("id").range(from, from + 999),
+        "read chunks",
+      );
+      chunks.push(...page.map((r) => ({ source: name, heading: r.heading, text: r.content })));
+      if (page.length < 1000) break;
+    }
+    return chunks;
+  },
+
   async readUploadedFile(name) {
     const blob = check(await supabase.storage.from(BUCKET).download(name), "download file");
     return Buffer.from(await blob.arrayBuffer());
