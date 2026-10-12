@@ -17,8 +17,8 @@ async function fetchJson(url, options) {
   return data;
 }
 
-const postJson = (url, body) =>
-  fetchJson(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+const postJson = (url, body, signal) =>
+  fetchJson(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal });
 
 // Browser storage can be blocked (private mode), so never let it throw
 const storage = {
@@ -418,9 +418,16 @@ function ModelMenu({ models, value, onChange, disabled, placement = "up" }) {
 
 /* ---------- composer ---------- */
 
-function Composer({ onSend, loading, models, model, onModel }) {
+function Composer({ onSend, loading, models, model, onModel, resetKey }) {
   const [text, setText] = useState("");
   const ref = useRef(null);
+
+  // "New chat": clear what was typed and put the cursor back in the box
+  useEffect(() => {
+    if (!resetKey) return;
+    setText("");
+    ref.current?.focus();
+  }, [resetKey]);
 
   // grow with the text, up to a limit (empty = one row, set by CSS)
   useEffect(() => {
@@ -996,6 +1003,9 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [mode, setMode] = useState("chat"); // "chat" | "quiz" | "interview"
+  const [chatKey, setChatKey] = useState(0); // bumps on "New chat"
+  const chatIdRef = useRef(0); // which conversation a reply belongs to
+  const abortRef = useRef(null); // cancels the question in flight
   const bottomRef = useRef(null);
 
   useEffect(() => {
@@ -1019,25 +1029,34 @@ function App() {
 
   async function send(question) {
     if (loading) return;
+    const chatId = chatIdRef.current;
+    const controller = new AbortController();
+    abortRef.current = controller;
     setMessages((m) => [...m, { role: "user", content: question }]);
     setLoading(true);
     try {
-      const data = await postJson("/api/chat", { question, model: model || undefined });
+      const data = await postJson("/api/chat", { question, model: model || undefined }, controller.signal);
+      if (chatId !== chatIdRef.current) return; // the user started a new chat meanwhile: drop the old reply
       setMessages((m) => [...m, {
         role: "assistant", content: data.answer, sources: data.sources,
         model: data.model, seconds: data.seconds, tokens: data.tokens,
       }]);
     } catch (err) {
+      if (chatId !== chatIdRef.current || err.name === "AbortError") return;
       setMessages((m) => [...m, { role: "assistant", content: err.message, error: true }]);
     } finally {
-      setLoading(false);
+      if (chatId === chatIdRef.current) setLoading(false);
     }
   }
 
   function newChat() {
+    chatIdRef.current += 1; // any reply still on its way now belongs to the old chat
+    abortRef.current?.abort();
+    setLoading(false);
     setMessages([]);
     setMode("chat");
     setSidebarOpen(false);
+    setChatKey((k) => k + 1);
   }
 
   // Drag a file anywhere onto the window to upload it
@@ -1119,7 +1138,7 @@ function App() {
           </div>
         </div>
 
-        {mode === "chat" && <Composer onSend={send} loading={loading} models={models} model={model} onModel={chooseModel} />}
+        {mode === "chat" && <Composer onSend={send} loading={loading} models={models} model={model} onModel={chooseModel} resetKey={chatKey} />}
       </main>
 
       {dragging && (
