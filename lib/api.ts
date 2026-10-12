@@ -55,10 +55,12 @@ export async function handle(fn: () => Promise<ApiResult>): Promise<ApiResult> {
 }
 
 export const api = {
-  chat: (question: unknown, model?: unknown) =>
+  // document (optional): limit the search to one file; omitted = all documents
+  chat: (question: unknown, model?: unknown, document?: unknown) =>
     handle(async () => {
       if (typeof question !== "string" || !question.trim()) return fail(400, "question is required");
-      return ok(await answerQuestion(question.trim(), resolveModel(model)));
+      const doc = document ? safeFileName(document) : undefined;
+      return ok(await answerQuestion(question.trim(), resolveModel(model), doc));
     }),
 
   models: () => handle(async () => ok({ models: MODELS, default: DEFAULT_MODEL })),

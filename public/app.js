@@ -252,7 +252,7 @@ function RecentChats({ chats, currentId, onOpen, onDelete }) {
 
 /* ---------- sidebar ---------- */
 
-function Sidebar({ documents, open, onClose, onNewChat, history }) {
+function Sidebar({ documents, open, onClose, onNewChat, history, onChatAbout, activeDoc }) {
   const { docs, loaded, canEdit, busy, notice, setNotice, upload, remove } = documents;
   const fileRef = useRef(null);
 
@@ -306,9 +306,11 @@ function Sidebar({ documents, open, onClose, onNewChat, history }) {
 
         <ul className="doc-list">
           {docs.map((d) => (
-            <li key={d} title={d}>
-              <FileBadge name={d} />
-              <span className="doc-name">{d}</span>
+            <li key={d} className={activeDoc === d ? "active" : ""}>
+              <button className="doc-open" onClick={() => onChatAbout(d)} title={`Chat about ${d}`}>
+                <FileBadge name={d} />
+                <span className="doc-name">{d}</span>
+              </button>
               {canEdit && (
                 <button className="icon-btn doc-remove" onClick={() => remove(d)} disabled={busy} aria-label={`Remove ${d}`}>
                   <Icon name="trash" size={14} />
@@ -399,7 +401,7 @@ function AssistantMessage({ msg, models }) {
               </button>
               {msg.model && (
                 <span className="meta">
-                  {label} · {msg.seconds.toFixed(1)}s{msg.tokens ? ` · ${msg.tokens.toLocaleString()} tokens` : ""}
+                  {msg.document ? `${msg.document} · ` : ""}{label} · {msg.seconds.toFixed(1)}s{msg.tokens ? ` · ${msg.tokens.toLocaleString()} tokens` : ""}
                 </span>
               )}
             </div>
@@ -474,9 +476,58 @@ function ModelMenu({ models, value, onChange, disabled, placement = "up" }) {
   );
 }
 
+/* ---------- document scope menu (chat about one document, or all) ---------- */
+
+function DocScopeMenu({ docs, value, onChange, disabled }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => { if (!rootRef.current?.contains(e.target)) setOpen(false); };
+    const onKey = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", onDown); document.removeEventListener("keydown", onKey); };
+  }, [open]);
+
+  const options = [{ id: "", label: "All documents" }, ...docs.map((d) => ({ id: d, label: d }))];
+  const pick = (id) => { onChange(id); setOpen(false); };
+
+  return (
+    <div className="model-menu" ref={rootRef}>
+      <button type="button" className={`model-trigger scope-trigger ${open ? "open" : ""} ${value ? "scoped" : ""}`}
+        onClick={() => setOpen(!open)} disabled={disabled} aria-haspopup="listbox" aria-expanded={open}
+        title={value ? `Answers only from ${value}` : "Answers from all documents"}>
+        <Icon name={value ? "file" : "book"} size={14} />
+        <span className="scope-label">{value || "All documents"}</span>
+        <Icon name="chevronDown" size={14} className="chevron" />
+      </button>
+      {open && (
+        <div className="model-popover scope-popover" role="listbox" aria-label="Documents to search">
+          <div className="popover-label">Answer from</div>
+          <div className="scope-options">
+            {options.map((o) => (
+              <button type="button" key={o.id || "all"} role="option" aria-selected={o.id === value}
+                className={`model-option ${o.id === value ? "selected" : ""}`} onClick={() => pick(o.id)}>
+                {o.id ? <FileBadge name={o.id} /> : <span className="file-badge all-badge">ALL</span>}
+                <span className="model-option-text">
+                  <span className="model-option-name scope-option-name">{o.label}</span>
+                  {!o.id && <span className="model-option-note">Search every document</span>}
+                </span>
+                {o.id === value && <Icon name="check" size={15} className="model-check" />}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ---------- composer ---------- */
 
-function Composer({ onSend, loading, models, model, onModel, resetKey }) {
+function Composer({ onSend, loading, models, model, onModel, resetKey, docs, scope, onScope }) {
   const [text, setText] = useState("");
   const ref = useRef(null);
 
@@ -510,11 +561,14 @@ function Composer({ onSend, loading, models, model, onModel, resetKey }) {
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } }}
-          placeholder="Ask anything about your documents…"
+          placeholder={scope ? `Ask about ${scope}…` : "Ask anything about your documents…"}
           autoFocus
         />
         <div className="composer-bar">
-          <ModelMenu models={models} value={model} onChange={onModel} disabled={loading} />
+          <div className="composer-menus">
+            <DocScopeMenu docs={docs} value={scope} onChange={onScope} disabled={loading} />
+            <ModelMenu models={models} value={model} onChange={onModel} disabled={loading} />
+          </div>
           <button type="submit" className="send-btn" disabled={loading || !text.trim()} aria-label="Send">
             <Icon name="send" size={18} />
           </button>
@@ -1052,6 +1106,67 @@ const SUGGESTIONS = [
   { title: "Delivery options", q: "How much is express delivery?" },
 ];
 
+// Welcome screen: sample questions for all documents, or questions built from one document's topics
+function ChatWelcome({ scope, docCount, model, onAsk, onClearScope }) {
+  const [topics, setTopics] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!scope) return;
+    if (topicsCache.has(scope)) { setTopics(topicsCache.get(scope)); return; }
+    let cancelled = false;
+    setTopics([]);
+    setLoading(true);
+    postJson("/api/quiz/topics", { name: scope, model: model || undefined })
+      .then((d) => { topicsCache.set(scope, d.topics); if (!cancelled) setTopics(d.topics); })
+      .catch(() => { if (!cancelled) setTopics([]); }) // no suggestions; the user can still type a question
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [scope]);
+
+  if (!scope) {
+    return (
+      <div className="welcome">
+        <Logo size={52} />
+        <h1>What would you like to know?</h1>
+        <p>
+          Ask questions about the {docCount} document{docCount === 1 ? "" : "s"} in your knowledge base,
+          or pick one document from the sidebar. Every answer cites the passages it used.
+        </p>
+        <div className="suggestions">
+          {SUGGESTIONS.map((s) => (
+            <button key={s.q} className="suggestion" onClick={() => onAsk(s.q)}>
+              <span className="suggestion-title">{s.title}</span>
+              <span className="suggestion-q">{s.q}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="welcome">
+      <div className="scope-hero">
+        <FileBadge name={scope} />
+        <span className="scope-hero-name" title={scope}>{scope}</span>
+        <button className="link-btn" onClick={onClearScope}><Icon name="x" size={13} /> All documents</button>
+      </div>
+      <h1>What would you like to know about this document?</h1>
+      <p>Answers come only from <strong>{scope}</strong>, with citations to the exact passages.</p>
+      <div className="suggestions">
+        {loading && [0, 1, 2, 3].map((i) => <div key={i} className="suggestion skeleton-box" aria-hidden="true" />)}
+        {!loading && topics.slice(0, 4).map((t) => (
+          <button key={t.title} className="suggestion" onClick={() => onAsk(`Explain ${t.title} as covered in this document.`)}>
+            <span className="suggestion-title">{t.title}</span>
+            <span className="suggestion-q">{t.description || `Explain ${t.title}`}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const documents = useDocuments();
   const [messages, setMessages] = useState([]);
@@ -1068,6 +1183,14 @@ function App() {
   const [chats, setChats] = useState(loadChats); // saved conversations, newest first
   const [currentId, setCurrentId] = useState(null); // the saved chat on screen (null = not saved yet)
   const currentIdRef = useRef(null);
+  const [scope, setScope] = useState(""); // "" = all documents, or one file name
+  const scopeRef = useRef("");
+  scopeRef.current = scope;
+
+  // A chat about a document that has since been removed falls back to all documents
+  useEffect(() => {
+    if (documents.loaded && scope && !documents.docs.includes(scope)) setScope("");
+  }, [documents.loaded, documents.docs, scope]);
 
   // Save the conversation whenever it gains a message (opening an old chat doesn't re-save it)
   useEffect(() => {
@@ -1077,7 +1200,8 @@ function App() {
       const existing = prev.find((c) => c.id === id);
       if (existing && existing.messages.length === messages.length) return prev;
       const title = (messages.find((m) => m.role === "user")?.content ?? "New chat").slice(0, 80);
-      return [{ id, title, updatedAt: Date.now(), messages }, ...prev.filter((c) => c.id !== id)].slice(0, MAX_CHATS);
+      const chat = { id, title, updatedAt: Date.now(), messages, scope: scopeRef.current };
+      return [chat, ...prev.filter((c) => c.id !== id)].slice(0, MAX_CHATS);
     });
   }, [messages]);
 
@@ -1115,11 +1239,11 @@ function App() {
     setMessages((m) => [...m, { role: "user", content: question }]);
     setLoading(true);
     try {
-      const data = await postJson("/api/chat", { question, model: model || undefined }, controller.signal);
+      const data = await postJson("/api/chat", { question, model: model || undefined, document: scope || undefined }, controller.signal);
       if (chatId !== chatIdRef.current) return; // the user started a new chat meanwhile: drop the old reply
       setMessages((m) => [...m, {
         role: "assistant", content: data.answer, sources: data.sources,
-        model: data.model, seconds: data.seconds, tokens: data.tokens,
+        model: data.model, seconds: data.seconds, tokens: data.tokens, document: data.document,
       }]);
     } catch (err) {
       if (chatId !== chatIdRef.current || err.name === "AbortError") return;
@@ -1146,7 +1270,15 @@ function App() {
 
   function openChat(id) {
     const chat = chats.find((c) => c.id === id);
-    if (chat) showChat(id, chat.messages);
+    if (!chat) return;
+    showChat(id, chat.messages);
+    setScope(chat.scope && documents.docs.includes(chat.scope) ? chat.scope : "");
+  }
+
+  // From the sidebar: start a fresh chat about one document
+  function chatAbout(doc) {
+    showChat(null, []);
+    setScope(doc);
   }
 
   function deleteChat(id) {
@@ -1172,7 +1304,8 @@ function App() {
   return (
     <div className="layout" onDragOver={onDragOver} onDragLeave={(e) => { if (!e.relatedTarget) setDragging(false); }} onDrop={onDrop}>
       <Sidebar documents={documents} open={sidebarOpen} onClose={() => setSidebarOpen(false)} onNewChat={newChat}
-        history={{ chats, currentId, onOpen: openChat, onDelete: deleteChat }} />
+        history={{ chats, currentId, onOpen: openChat, onDelete: deleteChat }}
+        onChatAbout={chatAbout} activeDoc={mode === "chat" ? scope : ""} />
 
       <main className="main">
         <header className="topbar">
@@ -1208,22 +1341,7 @@ function App() {
         <div className="scroll" hidden={mode !== "chat"}>
           <div className="thread">
             {messages.length === 0 ? (
-              <div className="welcome">
-                <Logo size={52} />
-                <h1>What would you like to know?</h1>
-                <p>
-                  Ask questions about the {documents.docs.length} document{documents.docs.length === 1 ? "" : "s"} in your
-                  knowledge base. Every answer cites the passages it used.
-                </p>
-                <div className="suggestions">
-                  {SUGGESTIONS.map((s) => (
-                    <button key={s.q} className="suggestion" onClick={() => send(s.q)}>
-                      <span className="suggestion-title">{s.title}</span>
-                      <span className="suggestion-q">{s.q}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
+              <ChatWelcome scope={scope} docCount={documents.docs.length} model={model} onAsk={send} onClearScope={() => setScope("")} />
             ) : (
               messages.map((msg, i) =>
                 msg.role === "user"
@@ -1236,7 +1354,10 @@ function App() {
           </div>
         </div>
 
-        {mode === "chat" && <Composer onSend={send} loading={loading} models={models} model={model} onModel={chooseModel} resetKey={chatKey} />}
+        {mode === "chat" && (
+          <Composer onSend={send} loading={loading} models={models} model={model} onModel={chooseModel} resetKey={chatKey}
+            docs={documents.docs} scope={scope} onScope={setScope} />
+        )}
       </main>
 
       {dragging && (

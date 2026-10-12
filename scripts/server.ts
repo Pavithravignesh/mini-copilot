@@ -48,7 +48,7 @@ async function route(req: http.IncomingMessage, url: URL): Promise<ApiResult | n
   switch (`${req.method} ${url.pathname}`) {
     case "POST /api/chat": {
       const body = await readJson(req);
-      return api.chat(body.question, body.model);
+      return api.chat(body.question, body.model, body.document);
     }
     case "GET /api/models":
       return api.models();
