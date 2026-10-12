@@ -49,9 +49,14 @@ export async function answerQuestion(question: string, model: string, document?:
     ],
   });
 
+  const answer = stripThinking(response.choices[0].message.content ?? "");
+  // The model was told to say exactly this when the sources don't cover the question
+  const notFound = sources.length === 0 || /could not find (that|this|it) in the documents/i.test(answer);
+
   return {
-    answer: stripThinking(response.choices[0].message.content ?? ""),
-    sources,
+    answer,
+    notFound,
+    sources: notFound ? [] : sources, // don't show unrelated passages as "sources" for a non-answer
     model,
     document: document ?? null,
     seconds: (Date.now() - started) / 1000,

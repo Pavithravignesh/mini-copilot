@@ -52,6 +52,10 @@ async function route(req: http.IncomingMessage, url: URL): Promise<ApiResult | n
     }
     case "GET /api/models":
       return api.models();
+    case "POST /api/web": {
+      const body = await readJson(req);
+      return api.webAnswer(body.question, body.model);
+    }
     case "POST /api/quiz/topics": {
       const body = await readJson(req);
       return api.quizTopics(body.name, body.model);

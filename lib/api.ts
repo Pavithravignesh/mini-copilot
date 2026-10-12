@@ -65,6 +65,14 @@ export const api = {
 
   models: () => handle(async () => ok({ models: MODELS, default: DEFAULT_MODEL })),
 
+  // Web fallback, only called after the user agrees to search the internet
+  webAnswer: (question: unknown, model?: unknown) =>
+    handle(async () => {
+      if (typeof question !== "string" || !question.trim() || question.length > 500) return fail(400, "question is required (up to 500 characters)");
+      const { answerFromWeb } = await import("./web.js");
+      return ok(await answerFromWeb(question.trim(), resolveModel(model)));
+    }),
+
   // Quiz step 1: topics the AI suggests for one document
   quizTopics: (rawName: unknown, model?: unknown) =>
     handle(async () => {

@@ -256,7 +256,7 @@ a { color: var(--accent); }
 .icon-btn:hover:not(:disabled) { background: var(--surface-hover); color: var(--text); }
 .icon-btn.small { width: 28px; height: 28px; }
 .ghost-btn {
-  display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 8px;
+  display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 8px; white-space: nowrap;
   border: 1px solid var(--border); background: var(--surface); font-size: 13.5px; font-weight: 500;
 }
 .ghost-btn:hover { background: var(--surface-hover); }
@@ -354,6 +354,28 @@ a { color: var(--accent); }
 .relevance-bar { width: 48px; height: 4px; border-radius: 4px; background: var(--border); overflow: hidden; }
 .relevance-bar span { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
 .source-card p { margin: 0; font-size: 13.5px; color: var(--text-2); line-height: 1.55; }
+
+/* Web fallback */
+.web-offer {
+  margin-top: 14px; padding: 14px 16px; border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border)); background: var(--accent-soft);
+  display: flex; flex-direction: column; gap: 12px; animation: rise 0.2s ease-out;
+}
+.web-offer.muted-line { padding: 0; border: none; background: none; color: var(--text-3); font-size: 13.5px; }
+.web-offer-text { display: flex; align-items: flex-start; gap: 10px; font-size: 14.5px; color: var(--text); }
+.web-offer-text .icon { margin-top: 3px; color: var(--accent); }
+.web-offer-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.web-offer .error-box { margin: 0; }
+.primary-btn.small { height: 34px; padding: 0 14px; font-size: 13.5px; }
+.web-badge {
+  display: inline-flex; align-items: center; gap: 6px; margin-bottom: 8px; padding: 3px 10px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; color: #0369a1; background: color-mix(in srgb, #0ea5e9 14%, transparent);
+}
+:root[data-theme="dark"] .web-badge { color: #7dd3fc; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .web-badge { color: #7dd3fc; } }
+a.source-chip { text-decoration: none; }
+.source-chip.web:hover { border-color: var(--accent); color: var(--text); }
+.source-host { font-size: 11.5px; color: var(--text-3); white-space: nowrap; }
 
 .msg-actions { display: flex; align-items: center; gap: 6px; margin-top: 10px; margin-left: -6px; }
 .meta { font-size: 12px; color: var(--text-3); }

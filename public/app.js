@@ -32,7 +32,8 @@ const ACCEPT = ".pdf,.docx,.txt,.md";
 // Markdown -> safe HTML, with citation markers ([1] or 【1】) turned into clickable chips.
 // DOMPurify removes any script/HTML that could have come from a document or the model.
 function renderAnswer(text) {
-  const withCites = text.replace(/【(\d+)】|\[(\d+)\]/g, (_, a, b) => `<sup class="cite" data-n="${a || b}">${a || b}</sup>`);
+  // also matches GPT-OSS style markers like 【1†L1-L4】
+  const withCites = text.replace(/【(\d+)[^】]*】|\[(\d+)\]/g, (_, a, b) => `<sup class="cite" data-n="${a || b}">${a || b}</sup>`);
   return DOMPurify.sanitize(marked.parse(withCites, { breaks: true }));
 }
 
@@ -67,6 +68,7 @@ const ICON_PATHS = {
   refresh: "M3 12a9 9 0 0 1 15.5-6.3L21 8M21 3v5h-5M21 12a9 9 0 0 1-15.5 6.3L3 16M3 21v-5h5",
   target: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 18a6 6 0 1 0 0-12 6 6 0 0 0 0 12zM12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4z",
   cpu: "M9 3v2M15 3v2M9 19v2M15 19v2M3 9h2M3 15h2M19 9h2M19 15h2M7 5h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM9 9h6v6H9z",
+  globe: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18",
 };
 
 function Icon({ name, size = 18, className = "" }) {
@@ -366,15 +368,66 @@ function SourceList({ sources, active, onSelect }) {
   );
 }
 
-function AssistantMessage({ msg, models }) {
+const hostOf = (url) => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; } };
+
+// Web answer sources: links that open the page in a new tab
+function WebSourceList({ sources }) {
+  if (!sources?.length) return null;
+  return (
+    <div className="sources">
+      <div className="sources-label"><Icon name="globe" size={13} /> Web sources</div>
+      <div className="source-chips">
+        {sources.map((s) => (
+          <a key={s.n} className="source-chip web" href={s.url} target="_blank" rel="noopener noreferrer nofollow" title={s.url}>
+            <span className="source-n">{s.n}</span>
+            <span className="source-doc">{s.title}</span>
+            <span className="source-host">{hostOf(s.url)}</span>
+          </a>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Shown under a "not in your documents" answer: offer to search the internet
+function WebOffer({ msg, onSearch, onDecline }) {
+  const where = msg.document ? <strong>{msg.document}</strong> : "any of your documents";
+  if (msg.webState === "declined") return <div className="web-offer muted-line">Okay, I'll stick to your documents.</div>;
+  if (msg.webState === "done") return null;
+  const loading = msg.webState === "loading";
+  return (
+    <div className="web-offer">
+      <div className="web-offer-text">
+        <Icon name="globe" size={16} />
+        <span>This isn't covered in {where}. <strong>Do you want me to search the internet?</strong></span>
+      </div>
+      <div className="web-offer-actions">
+        <button className="primary-btn small" onClick={onSearch} disabled={loading}>
+          {loading ? <><span className="spinner small" /> Searching the web…</> : <><Icon name="globe" size={14} /> Yes, search the web</>}
+        </button>
+        {!loading && <button className="ghost-btn" onClick={onDecline}>No thanks</button>}
+      </div>
+      {msg.webError && <div className="error-box"><Icon name="alert" size={16} /> {msg.webError}</div>}
+    </div>
+  );
+}
+
+function AssistantMessage({ msg, models, onSearchWeb, onDeclineWeb }) {
   const [activeSource, setActiveSource] = useState(null);
   const [copied, setCopied] = useState(false);
   const label = models.find((m) => m.id === msg.model)?.label ?? msg.model;
 
-  // Clicking a [n] chip in the answer opens that source
+  // Clicking a [n] chip in the answer opens that source (for web answers: the web page)
   function onAnswerClick(e) {
     const cite = e.target.closest(".cite");
-    if (cite) setActiveSource(Number(cite.dataset.n));
+    if (!cite) return;
+    const n = Number(cite.dataset.n);
+    if (msg.web) {
+      const url = msg.sources?.find((s) => s.n === n)?.url;
+      if (url && /^https?:\/\//.test(url)) window.open(url, "_blank", "noopener,noreferrer");
+    } else {
+      setActiveSource(n);
+    }
   }
 
   async function copy() {
@@ -393,15 +446,21 @@ function AssistantMessage({ msg, models }) {
           <div className="error-box"><Icon name="alert" size={16} /> {msg.content}</div>
         ) : (
           <>
+            {msg.web && (
+              <div className="web-badge"><Icon name="globe" size={13} /> From the web · {msg.provider} · not from your documents</div>
+            )}
             <div className="answer" onClick={onAnswerClick} dangerouslySetInnerHTML={{ __html: renderAnswer(msg.content) }} />
-            <SourceList sources={msg.sources} active={activeSource} onSelect={setActiveSource} />
+            {msg.web
+              ? <WebSourceList sources={msg.sources} />
+              : <SourceList sources={msg.sources} active={activeSource} onSelect={setActiveSource} />}
+            {msg.notFound && <WebOffer msg={msg} onSearch={onSearchWeb} onDecline={onDeclineWeb} />}
             <div className="msg-actions">
               <button className="icon-btn small" onClick={copy} aria-label="Copy answer" title="Copy answer">
                 <Icon name={copied ? "check" : "copy"} size={14} />
               </button>
               {msg.model && (
                 <span className="meta">
-                  {msg.document ? `${msg.document} · ` : ""}{label} · {msg.seconds.toFixed(1)}s{msg.tokens ? ` · ${msg.tokens.toLocaleString()} tokens` : ""}
+                  {msg.web ? `Searched: "${msg.query}" · ` : msg.document ? `${msg.document} · ` : ""}{label} · {msg.seconds.toFixed(1)}s{msg.tokens ? ` · ${msg.tokens.toLocaleString()} tokens` : ""}
                 </span>
               )}
             </div>
@@ -1196,11 +1255,15 @@ function App() {
   useEffect(() => {
     const id = currentIdRef.current;
     if (!id || messages.length === 0) return;
+    // a web search still running is saved as "not searched yet", so a reopened chat never shows a stuck spinner
+    const toSave = messages.map((m) => (m.webState === "loading" ? { ...m, webState: undefined } : m));
     setChats((prev) => {
       const existing = prev.find((c) => c.id === id);
-      if (existing && existing.messages.length === messages.length) return prev;
-      const title = (messages.find((m) => m.role === "user")?.content ?? "New chat").slice(0, 80);
-      const chat = { id, title, updatedAt: Date.now(), messages, scope: scopeRef.current };
+      const unchanged = existing && existing.messages.length === toSave.length
+        && existing.messages.every((m, i) => m.webState === toSave[i].webState);
+      if (unchanged) return prev;
+      const title = (toSave.find((m) => m.role === "user")?.content ?? "New chat").slice(0, 80);
+      const chat = { id, title, updatedAt: Date.now(), messages: toSave, scope: scopeRef.current };
       return [chat, ...prev.filter((c) => c.id !== id)].slice(0, MAX_CHATS);
     });
   }, [messages]);
@@ -1242,7 +1305,7 @@ function App() {
       const data = await postJson("/api/chat", { question, model: model || undefined, document: scope || undefined }, controller.signal);
       if (chatId !== chatIdRef.current) return; // the user started a new chat meanwhile: drop the old reply
       setMessages((m) => [...m, {
-        role: "assistant", content: data.answer, sources: data.sources,
+        role: "assistant", content: data.answer, sources: data.sources, notFound: data.notFound, question,
         model: data.model, seconds: data.seconds, tokens: data.tokens, document: data.document,
       }]);
     } catch (err) {
@@ -1252,6 +1315,33 @@ function App() {
       if (chatId === chatIdRef.current) setLoading(false);
     }
   }
+
+  const patchMessage = (index, patch) =>
+    setMessages((m) => m.map((x, i) => (i === index ? { ...x, ...patch } : x)));
+
+  // The user said yes: search the internet for the question this "not found" answer belongs to
+  async function searchWeb(index) {
+    const target = messages[index];
+    const question = target?.question ?? [...messages.slice(0, index)].reverse().find((m) => m.role === "user")?.content;
+    if (!question) return;
+    const chatId = chatIdRef.current;
+    patchMessage(index, { webState: "loading", webError: "" });
+    try {
+      const data = await postJson("/api/web", { question, model: model || undefined });
+      if (chatId !== chatIdRef.current) return; // switched chats meanwhile
+      const webMsg = {
+        role: "assistant", web: true, content: data.answer, sources: data.sources, provider: data.provider,
+        query: data.query, model: data.model, seconds: data.seconds, tokens: data.tokens,
+      };
+      // put the web answer right under the offer it answers, and close the offer
+      setMessages((m) => [...m.slice(0, index), { ...m[index], webState: "done" }, webMsg, ...m.slice(index + 1)]);
+    } catch (err) {
+      if (chatId !== chatIdRef.current) return;
+      patchMessage(index, { webState: undefined, webError: err.message });
+    }
+  }
+
+  const declineWeb = (index) => patchMessage(index, { webState: "declined" });
 
   // Show a conversation: [] for a new chat, or a saved chat's messages
   function showChat(id, msgs) {
@@ -1346,7 +1436,8 @@ function App() {
               messages.map((msg, i) =>
                 msg.role === "user"
                   ? <div key={i} className="msg user"><div className="user-bubble">{msg.content}</div></div>
-                  : <AssistantMessage key={i} msg={msg} models={models} />,
+                  : <AssistantMessage key={i} msg={msg} models={models}
+                      onSearchWeb={() => searchWeb(i)} onDeclineWeb={() => declineWeb(i)} />,
               )
             )}
             {loading && <Thinking />}
