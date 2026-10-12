@@ -184,6 +184,25 @@ a { color: var(--accent); }
 .notice-close { border: none; background: none; padding: 2px; color: inherit; opacity: 0.7; }
 .notice-close:hover { opacity: 1; }
 
+.chat-list {
+  list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px;
+  max-height: 32vh; overflow-y: auto; flex-shrink: 0;
+}
+.chat-list li { display: flex; align-items: center; gap: 4px; padding-right: 6px; border-radius: 8px; }
+.chat-list li:hover { background: var(--surface-hover); }
+.chat-list li.active { background: var(--accent-soft); }
+.chat-list li:hover .doc-remove, .chat-list .doc-remove:focus-visible { opacity: 1; }
+.chat-item {
+  flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; padding: 7px 4px 7px 10px;
+  border: none; background: none; text-align: left; font-size: 13.5px; color: var(--text-2);
+}
+.chat-list li:hover .chat-item { color: var(--text); }
+.chat-list li.active .chat-item { color: var(--accent-text); font-weight: 550; }
+.chat-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-time { flex-shrink: 0; font-size: 11.5px; color: var(--text-3); }
+.chat-list li:hover .chat-time { display: none; }
+.chat-list li.active .chat-time { color: var(--accent-text); opacity: 0.7; }
+
 .doc-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; flex: 1; }
 .doc-list li {
   display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 8px;

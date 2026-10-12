@@ -20,6 +20,7 @@ Everything runs on **free tiers**: [Groq](https://console.groq.com) for the LLM,
 
 - Chat in the browser with answers that cite their sources
 - **Upload PDF, Word (.docx), .txt and .md** files (up to 10 MB); they are indexed automatically
+- **Chat history**: past conversations are listed under "Recent chats" in the sidebar; reopen one to read it or keep asking. Saved in your browser (localStorage, last 30 chats), never on the server
 - **Quiz mode**: pick a document, the AI suggests topics ("Which topic would you like to be quizzed on?"), then asks 5 or 10 multiple-choice and short-answer questions one at a time, grades short answers, and shows a score with review
 - **Interview practice**: pick a document and a topic (or all topics); the AI writes 15 or 20 real-world, scenario-based interview questions, Junior → Senior, shown one at a time with Previous / Next, jump dots and ← → keys. No answers — practise out loud
 - **Model picker**: switch between GPT-OSS 120B, GPT-OSS 20B and Qwen 3.8 27B; each answer shows the model, time and tokens used

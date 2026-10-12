@@ -194,9 +194,65 @@ function useDocuments() {
   return { docs, loaded, uploadMode, canEdit: uploadMode !== "disabled", busy, notice, setNotice, upload, remove };
 }
 
+/* ---------- chat history (saved in this browser only) ---------- */
+
+const HISTORY_KEY = "mini-copilot:chats";
+const MAX_CHATS = 30;
+
+function loadChats() {
+  try {
+    const chats = JSON.parse(storage.get(HISTORY_KEY) || "[]");
+    return Array.isArray(chats) ? chats : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveChats(chats) {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(chats));
+  } catch {
+    // storage full or blocked: keep the most recent half and try once more
+    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(chats.slice(0, Math.ceil(chats.length / 2)))); } catch {}
+  }
+}
+
+const newChatId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+
+function timeAgo(ms) {
+  const s = Math.round((Date.now() - ms) / 1000);
+  if (s < 60) return "now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  if (s < 172800) return "Yesterday";
+  return new Date(ms).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+}
+
+function RecentChats({ chats, currentId, onOpen, onDelete }) {
+  if (chats.length === 0) return null;
+  return (
+    <>
+      <div className="section-label"><span>Recent chats</span></div>
+      <ul className="chat-list">
+        {chats.map((c) => (
+          <li key={c.id} className={c.id === currentId ? "active" : ""}>
+            <button className="chat-item" onClick={() => onOpen(c.id)} title={c.title}>
+              <span className="chat-title">{c.title}</span>
+              <span className="chat-time">{timeAgo(c.updatedAt)}</span>
+            </button>
+            <button className="icon-btn doc-remove" onClick={() => onDelete(c.id)} aria-label={`Delete chat: ${c.title}`}>
+              <Icon name="trash" size={14} />
+            </button>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
+
 /* ---------- sidebar ---------- */
 
-function Sidebar({ documents, open, onClose, onNewChat }) {
+function Sidebar({ documents, open, onClose, onNewChat, history }) {
   const { docs, loaded, canEdit, busy, notice, setNotice, upload, remove } = documents;
   const fileRef = useRef(null);
 
@@ -218,6 +274,8 @@ function Sidebar({ documents, open, onClose, onNewChat }) {
         <button className="new-chat" onClick={onNewChat}>
           <Icon name="plus" size={16} /> New chat
         </button>
+
+        <RecentChats {...history} />
 
         <div className="section-label">
           <span>Knowledge base</span>
@@ -1007,6 +1065,23 @@ function App() {
   const chatIdRef = useRef(0); // which conversation a reply belongs to
   const abortRef = useRef(null); // cancels the question in flight
   const bottomRef = useRef(null);
+  const [chats, setChats] = useState(loadChats); // saved conversations, newest first
+  const [currentId, setCurrentId] = useState(null); // the saved chat on screen (null = not saved yet)
+  const currentIdRef = useRef(null);
+
+  // Save the conversation whenever it gains a message (opening an old chat doesn't re-save it)
+  useEffect(() => {
+    const id = currentIdRef.current;
+    if (!id || messages.length === 0) return;
+    setChats((prev) => {
+      const existing = prev.find((c) => c.id === id);
+      if (existing && existing.messages.length === messages.length) return prev;
+      const title = (messages.find((m) => m.role === "user")?.content ?? "New chat").slice(0, 80);
+      return [{ id, title, updatedAt: Date.now(), messages }, ...prev.filter((c) => c.id !== id)].slice(0, MAX_CHATS);
+    });
+  }, [messages]);
+
+  useEffect(() => { saveChats(chats); }, [chats]);
 
   useEffect(() => {
     fetchJson("/api/models")
@@ -1032,6 +1107,11 @@ function App() {
     const chatId = chatIdRef.current;
     const controller = new AbortController();
     abortRef.current = controller;
+    if (!currentIdRef.current) {
+      // first question of a new conversation: give it an id so it gets saved to history
+      currentIdRef.current = newChatId();
+      setCurrentId(currentIdRef.current);
+    }
     setMessages((m) => [...m, { role: "user", content: question }]);
     setLoading(true);
     try {
@@ -1049,14 +1129,31 @@ function App() {
     }
   }
 
-  function newChat() {
-    chatIdRef.current += 1; // any reply still on its way now belongs to the old chat
+  // Show a conversation: [] for a new chat, or a saved chat's messages
+  function showChat(id, msgs) {
+    chatIdRef.current += 1; // any reply still on its way belongs to the chat we're leaving
     abortRef.current?.abort();
     setLoading(false);
-    setMessages([]);
+    currentIdRef.current = id;
+    setCurrentId(id);
+    setMessages(msgs);
     setMode("chat");
     setSidebarOpen(false);
     setChatKey((k) => k + 1);
+  }
+
+  const newChat = () => showChat(null, []);
+
+  function openChat(id) {
+    const chat = chats.find((c) => c.id === id);
+    if (chat) showChat(id, chat.messages);
+  }
+
+  function deleteChat(id) {
+    const chat = chats.find((c) => c.id === id);
+    if (!chat || !confirm(`Delete the chat "${chat.title}"?`)) return;
+    setChats((prev) => prev.filter((c) => c.id !== id));
+    if (id === currentIdRef.current) newChat();
   }
 
   // Drag a file anywhere onto the window to upload it
@@ -1074,7 +1171,8 @@ function App() {
 
   return (
     <div className="layout" onDragOver={onDragOver} onDragLeave={(e) => { if (!e.relatedTarget) setDragging(false); }} onDrop={onDrop}>
-      <Sidebar documents={documents} open={sidebarOpen} onClose={() => setSidebarOpen(false)} onNewChat={newChat} />
+      <Sidebar documents={documents} open={sidebarOpen} onClose={() => setSidebarOpen(false)} onNewChat={newChat}
+        history={{ chats, currentId, onOpen: openChat, onDelete: deleteChat }} />
 
       <main className="main">
         <header className="topbar">
