@@ -69,6 +69,11 @@ const ICON_PATHS = {
   target: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 18a6 6 0 1 0 0-12 6 6 0 0 0 0 12zM12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4z",
   cpu: "M9 3v2M15 3v2M9 19v2M15 19v2M3 9h2M3 15h2M19 9h2M19 15h2M7 5h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM9 9h6v6H9z",
   globe: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18",
+  mic: "M12 2a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3zM19 10v1a7 7 0 0 1-14 0v-1M12 18v4M8 22h8",
+  stop: "M7 7h10v10H7z",
+  volume: "M11 5 6 9H2v6h4l5 4zM15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14",
+  volumeOff: "M11 5 6 9H2v6h4l5 4zM22 9l-6 6M16 9l6 6",
+  repeat: "M17 2l4 4-4 4M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4M21 13v2a3 3 0 0 1-3 3H3",
 };
 
 function Icon({ name, size = 18, className = "" }) {
@@ -537,7 +542,7 @@ function ModelMenu({ models, value, onChange, disabled, placement = "up" }) {
 
 /* ---------- document scope menu (chat about one document, or all) ---------- */
 
-function DocScopeMenu({ docs, value, onChange, disabled }) {
+function DocScopeMenu({ docs, value, onChange, disabled, placement = "up" }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
 
@@ -563,7 +568,7 @@ function DocScopeMenu({ docs, value, onChange, disabled }) {
         <Icon name="chevronDown" size={14} className="chevron" />
       </button>
       {open && (
-        <div className="model-popover scope-popover" role="listbox" aria-label="Documents to search">
+        <div className={`model-popover scope-popover ${placement === "down" ? "down left" : ""}`} role="listbox" aria-label="Documents to search">
           <div className="popover-label">Answer from</div>
           <div className="scope-options">
             {options.map((o) => (
@@ -1156,6 +1161,351 @@ function InterviewView({ docs, loaded, models, model, onModel }) {
   );
 }
 
+/* ---------- voice: microphone recording ---------- */
+
+// Records one spoken question. Stops by itself after ~1.4 s of silence (once speech was heard),
+// gives up if nothing is said for 8 s, and never records longer than 60 s.
+function useVoiceRecorder({ onAudio, onNoSpeech, onError }) {
+  const [recording, setRecording] = useState(false);
+  const [level, setLevel] = useState(0); // 0..1, drives the orb animation
+  const stopRef = useRef(null);
+
+  async function start() {
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      return onError("This browser can't record audio. Try Chrome, Edge or Safari.");
+    }
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+    } catch (err) {
+      return onError(err.name === "NotAllowedError"
+        ? "Microphone access was blocked. Allow it in the browser's address bar, then try again."
+        : "No microphone found.");
+    }
+
+    const mimeType = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"].find((t) => MediaRecorder.isTypeSupported(t)) || "";
+    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    const chunks = [];
+    recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+
+    // Measure loudness to animate the orb and detect when the speaker stops
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 1024;
+    ctx.createMediaStreamSource(stream).connect(analyser);
+    const samples = new Float32Array(analyser.fftSize);
+
+    let heardSpeech = false, lastSound = Date.now(), cancelled = false, raf;
+    const startedAt = Date.now();
+
+    function tick() {
+      analyser.getFloatTimeDomainData(samples);
+      const rms = Math.sqrt(samples.reduce((s, v) => s + v * v, 0) / samples.length);
+      setLevel(Math.min(1, rms * 12));
+      const now = Date.now();
+      if (rms > 0.02) { heardSpeech = true; lastSound = now; }
+      if (heardSpeech && now - lastSound > 1400) return finish(false); // finished talking
+      if (!heardSpeech && now - startedAt > 8000) return finish(true); // nothing said
+      if (now - startedAt > 60000) return finish(false); // safety limit
+      raf = requestAnimationFrame(tick);
+    }
+
+    function finish(discard) {
+      if (recorder.state === "inactive") return;
+      cancelled = discard;
+      cancelAnimationFrame(raf);
+      recorder.stop();
+    }
+
+    recorder.onstop = () => {
+      stream.getTracks().forEach((t) => t.stop());
+      ctx.close();
+      setRecording(false);
+      setLevel(0);
+      stopRef.current = null;
+      if (cancelled) return heardSpeech ? null : onNoSpeech();
+      onAudio(new Blob(chunks, { type: recorder.mimeType || mimeType || "audio/webm" }));
+    };
+
+    stopRef.current = finish;
+    recorder.start();
+    setRecording(true);
+    raf = requestAnimationFrame(tick);
+  }
+
+  // send = true: stop and transcribe; false: throw the recording away
+  const stop = (send = true) => stopRef.current?.(!send);
+  return { recording, level, start, stop };
+}
+
+/* ---------- voice: speaking answers aloud ---------- */
+
+const synth = typeof window !== "undefined" ? window.speechSynthesis : null;
+
+// Prefer natural-sounding English voices when the browser has them
+function pickVoice() {
+  const voices = synth?.getVoices() ?? [];
+  const english = voices.filter((v) => /^en(-|_|$)/i.test(v.lang));
+  return english.find((v) => /natural|neural/i.test(v.name))
+    || english.find((v) => /google us english|aria|jenny|samantha/i.test(v.name))
+    || english.find((v) => v.default) || english[0] || voices[0] || null;
+}
+synth?.addEventListener?.("voiceschanged", () => {}); // makes Chrome load its voice list early
+
+// Turn a markdown answer into plain speech: no citation numbers, symbols or code fences
+function toSpeech(text) {
+  return text
+    .replace(/【[^】]*】|\[\d+\]/g, "")
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/[*_#`>|]/g, "")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/\s+/g, " ")
+    .replace(/\s+([.,!?;:])/g, "$1") // "assistance ." -> "assistance."
+    .trim();
+}
+
+// Speak sentence by sentence (Chrome cuts off long single utterances). Returns a cancel function.
+function speak(text, { onEnd } = {}) {
+  if (!synth) { onEnd?.(); return () => {}; }
+  synth.cancel();
+  const sentences = toSpeech(text).match(/[^.!?]+[.!?]*/g) ?? [];
+  const voice = pickVoice();
+  let stopped = false;
+  sentences.forEach((s, i) => {
+    const u = new SpeechSynthesisUtterance(s.trim());
+    if (voice) u.voice = voice;
+    u.rate = 1.03;
+    if (i === sentences.length - 1) u.onend = () => { if (!stopped) onEnd?.(); };
+    synth.speak(u);
+  });
+  if (sentences.length === 0) onEnd?.();
+  return () => { stopped = true; synth.cancel(); };
+}
+
+/* ---------- voice view ---------- */
+
+const YES = /^(yes|yeah|yep|sure|ok(ay)?|please|go ahead|do it|search)\b/i;
+const NO = /^(no|nope|nah|don'?t|no thanks)\b/i;
+
+function VoiceView({ active, docs, scope, onScope, models, model, onModel }) {
+  const [turns, setTurns] = useState([]);
+  const [phase, setPhase] = useState("idle"); // idle | listening | transcribing | thinking | speaking
+  const [error, setError] = useState("");
+  const [handsFree, setHandsFree] = useState(() => storage.get("mini-copilot:handsfree") === "1");
+  const [muted, setMuted] = useState(() => storage.get("mini-copilot:muted") === "1");
+  const cancelSpeechRef = useRef(() => {});
+  const pendingOfferRef = useRef(null); // index of a "search the web?" offer waiting for a spoken yes/no
+  const turnsRef = useRef(turns);
+  turnsRef.current = turns;
+  const bottomRef = useRef(null);
+
+  const recorder = useVoiceRecorder({
+    onAudio: (blob) => handleAudio(blob),
+    onNoSpeech: () => { setPhase("idle"); setError("I didn't hear anything. Tap the mic and try again."); },
+    onError: (msg) => { setPhase("idle"); setError(msg); },
+  });
+
+  useEffect(() => { storage.set("mini-copilot:handsfree", handsFree ? "1" : "0"); }, [handsFree]);
+  useEffect(() => { storage.set("mini-copilot:muted", muted ? "1" : "0"); }, [muted]);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [turns, phase]);
+
+  // Leaving the Voice tab stops the mic and the speech
+  useEffect(() => {
+    if (!active) { recorder.stop(false); cancelSpeechRef.current(); setPhase("idle"); }
+  }, [active]);
+
+  function listen() {
+    setError("");
+    setPhase("listening");
+    recorder.start();
+  }
+
+  // Read an answer aloud (unless muted), then listen again in hands-free mode
+  function respond(text) {
+    const after = () => { setPhase("idle"); if (handsFreeRef.current && activeRef.current) listen(); };
+    if (muted) return after();
+    setPhase("speaking");
+    cancelSpeechRef.current = speak(text, { onEnd: after });
+  }
+  const handsFreeRef = useRef(handsFree);
+  handsFreeRef.current = handsFree;
+  const activeRef = useRef(active);
+  activeRef.current = active;
+
+  async function handleAudio(blob) {
+    setPhase("transcribing");
+    try {
+      const res = await fetch("/api/transcribe", { method: "POST", headers: { "Content-Type": blob.type }, body: blob });
+      const data = JSON.parse(await res.text());
+      if (!res.ok) throw new Error(data.error || "Couldn't understand the audio");
+      const text = data.text.trim();
+      if (!text) { setPhase("idle"); setError("I couldn't make out any words. Please try again."); return; }
+
+      // A spoken yes/no to a pending "search the web?" offer
+      const offer = pendingOfferRef.current;
+      if (offer !== null && (YES.test(text) || NO.test(text))) {
+        pendingOfferRef.current = null;
+        setTurns((t) => [...t, { role: "user", content: text }]);
+        return YES.test(text) ? searchWeb(offer) : declineWeb(offer, true);
+      }
+      pendingOfferRef.current = null;
+      await ask(text);
+    } catch (err) {
+      setPhase("idle");
+      setError(err.message);
+    }
+  }
+
+  async function ask(question) {
+    setTurns((t) => [...t, { role: "user", content: question }]);
+    setPhase("thinking");
+    try {
+      const data = await postJson("/api/chat", { question, model: model || undefined, document: scope || undefined, style: "voice" });
+      const msg = {
+        role: "assistant", content: data.answer, sources: data.sources, notFound: data.notFound, question,
+        model: data.model, seconds: data.seconds, tokens: data.tokens, document: data.document,
+      };
+      setTurns((t) => [...t, msg]);
+      if (data.notFound) {
+        // turnsRef already includes the question (rendered while we waited), so the answer lands at this index
+        pendingOfferRef.current = turnsRef.current.length;
+        respond(`I couldn't find that in ${data.document ? "this document" : "your documents"}. Do you want me to search the internet?`);
+      } else {
+        respond(data.answer);
+      }
+    } catch (err) {
+      setPhase("idle");
+      setTurns((t) => [...t, { role: "assistant", content: err.message, error: true }]);
+    }
+  }
+
+  const patchTurn = (index, patch) => setTurns((t) => t.map((x, i) => (i === index ? { ...x, ...patch } : x)));
+
+  async function searchWeb(index) {
+    pendingOfferRef.current = null;
+    cancelSpeechRef.current();
+    const question = turnsRef.current[index]?.question;
+    if (!question) return;
+    patchTurn(index, { webState: "loading", webError: "" });
+    setPhase("thinking");
+    try {
+      const data = await postJson("/api/web", { question, model: model || undefined, style: "voice" });
+      const webMsg = {
+        role: "assistant", web: true, content: data.answer, sources: data.sources, provider: data.provider,
+        query: data.query, model: data.model, seconds: data.seconds, tokens: data.tokens,
+      };
+      // in a spoken conversation the web answer comes next in time, so it goes at the end
+      setTurns((t) => [...t.map((x, i) => (i === index ? { ...x, webState: "done" } : x)), webMsg]);
+      respond(data.answer);
+    } catch (err) {
+      patchTurn(index, { webState: undefined, webError: err.message });
+      setPhase("idle");
+    }
+  }
+
+  function declineWeb(index, spoken = false) {
+    pendingOfferRef.current = null;
+    patchTurn(index, { webState: "declined" });
+    if (spoken) respond("Okay, I'll stick to your documents.");
+    else { cancelSpeechRef.current(); setPhase("idle"); }
+  }
+
+  // The big button: start listening / send / stop speaking
+  function onOrb() {
+    if (phase === "idle") return listen();
+    if (phase === "listening") return recorder.stop(true);
+    if (phase === "speaking") { cancelSpeechRef.current(); setPhase("idle"); }
+  }
+
+  function replay(msg) {
+    cancelSpeechRef.current();
+    setPhase("speaking");
+    cancelSpeechRef.current = speak(msg.content, { onEnd: () => setPhase("idle") });
+  }
+
+  function clearConversation() {
+    recorder.stop(false);
+    cancelSpeechRef.current();
+    pendingOfferRef.current = null;
+    setTurns([]);
+    setPhase("idle");
+    setError("");
+  }
+
+  const status = {
+    idle: "Tap to speak",
+    listening: "Listening… tap when you're done",
+    transcribing: "Transcribing…",
+    thinking: "Thinking…",
+    speaking: "Speaking… tap to stop",
+  }[phase];
+
+  return (
+    <div className="voice-view">
+      <div className="thread voice">
+        <div className="quiz-header voice-controls">
+          <DocScopeMenu docs={docs} value={scope} onChange={onScope} disabled={phase !== "idle"} placement="down" />
+          <div className="voice-controls-right">
+            {turns.length > 0 && <button className="ghost-btn" onClick={clearConversation}><Icon name="plus" size={14} /> New conversation</button>}
+            <ModelMenu models={models} value={model} onChange={onModel} disabled={phase !== "idle"} placement="down" />
+          </div>
+        </div>
+
+        {turns.length === 0 && (
+          <div className="welcome compact voice-intro">
+            <span className="quiz-icon voice"><Icon name="mic" size={26} /></span>
+            <h1>Ask out loud</h1>
+            <p>
+              Tap the microphone and ask a question about {scope ? <strong>{scope}</strong> : "your documents"}.
+              I'll answer out loud and show the sources here.
+            </p>
+          </div>
+        )}
+
+        {turns.map((t, i) =>
+          t.role === "user"
+            ? <div key={i} className="msg user"><div className="user-bubble"><Icon name="mic" size={13} className="said-icon" /> {t.content}</div></div>
+            : (
+              <div key={i} className="voice-answer">
+                <AssistantMessage msg={t} models={models} onSearchWeb={() => searchWeb(i)} onDeclineWeb={() => declineWeb(i)} />
+                {!t.error && !muted && (
+                  <button className="link-btn replay" onClick={() => replay(t)} disabled={phase !== "idle"}>
+                    <Icon name="volume" size={13} /> Play again
+                  </button>
+                )}
+              </div>
+            ),
+        )}
+        <div ref={bottomRef} />
+      </div>
+
+      <div className="voice-dock">
+        {error && <div className="error-box voice-error"><Icon name="alert" size={16} /> {error}</div>}
+        <button className={`orb ${phase}`} onClick={onOrb} disabled={phase === "transcribing" || phase === "thinking"}
+          style={{ "--level": recorder.level }} aria-label={status}>
+          <span className="orb-ring" />
+          <span className="orb-core">
+            {phase === "transcribing" || phase === "thinking"
+              ? <span className="spinner orb-spinner" />
+              : <Icon name={phase === "listening" ? "stop" : phase === "speaking" ? "volume" : "mic"} size={28} />}
+          </span>
+        </button>
+        <div className="orb-status">{status}</div>
+        <div className="voice-toggles">
+          <button className={`toggle ${handsFree ? "on" : ""}`} onClick={() => setHandsFree(!handsFree)} aria-pressed={handsFree}
+            title="After each answer, start listening again automatically">
+            <Icon name="repeat" size={14} /> Hands-free
+          </button>
+          <button className={`toggle ${muted ? "on" : ""}`} onClick={() => { setMuted(!muted); cancelSpeechRef.current(); if (phase === "speaking") setPhase("idle"); }}
+            aria-pressed={muted} title="Show answers as text only">
+            <Icon name={muted ? "volumeOff" : "volume"} size={14} /> {muted ? "Voice off" : "Voice on"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ---------- app ---------- */
 
 const SUGGESTIONS = [
@@ -1234,7 +1584,7 @@ function App() {
   const [model, setModel] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [dragging, setDragging] = useState(false);
-  const [mode, setMode] = useState("chat"); // "chat" | "quiz" | "interview"
+  const [mode, setMode] = useState("chat"); // "chat" | "quiz" | "interview" | "voice"
   const [chatKey, setChatKey] = useState(0); // bumps on "New chat"
   const chatIdRef = useRef(0); // which conversation a reply belongs to
   const abortRef = useRef(null); // cancels the question in flight
@@ -1410,6 +1760,9 @@ function App() {
             <button role="tab" aria-selected={mode === "interview"} className={mode === "interview" ? "active" : ""} onClick={() => setMode("interview")}>
               <Icon name="briefcase" size={15} /> <span className="tab-label">Interview</span>
             </button>
+            <button role="tab" aria-selected={mode === "voice"} className={mode === "voice" ? "active" : ""} onClick={() => setMode("voice")}>
+              <Icon name="mic" size={15} /> <span className="tab-label">Voice</span>
+            </button>
           </div>
           <div className="topbar-actions">
             {mode === "chat" && messages.length > 0 && (
@@ -1422,6 +1775,11 @@ function App() {
         {/* Quiz stays mounted while hidden, so switching to Chat and back keeps your progress */}
         <div className="scroll" hidden={mode !== "quiz"}>
           <QuizView docs={documents.docs} loaded={documents.loaded} models={models} model={model} onModel={chooseModel} />
+        </div>
+
+        <div className="scroll" hidden={mode !== "voice"}>
+          <VoiceView active={mode === "voice"} docs={documents.docs} scope={scope} onScope={setScope}
+            models={models} model={model} onModel={chooseModel} />
         </div>
 
         <div className="scroll" hidden={mode !== "interview"}>

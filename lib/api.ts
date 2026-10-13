@@ -56,21 +56,30 @@ export async function handle(fn: () => Promise<ApiResult>): Promise<ApiResult> {
 
 export const api = {
   // document (optional): limit the search to one file; omitted = all documents
-  chat: (question: unknown, model?: unknown, document?: unknown) =>
+  // style "voice": short spoken-style answer for Voice mode
+  chat: (question: unknown, model?: unknown, document?: unknown, style?: unknown) =>
     handle(async () => {
       if (typeof question !== "string" || !question.trim()) return fail(400, "question is required");
       const doc = document ? safeFileName(document) : undefined;
-      return ok(await answerQuestion(question.trim(), resolveModel(model), doc));
+      return ok(await answerQuestion(question.trim(), resolveModel(model), doc, style === "voice" ? "voice" : "text"));
+    }),
+
+  // Voice mode: recorded audio -> text (Whisper)
+  transcribe: (audio: Buffer, mimeType: unknown) =>
+    handle(async () => {
+      const { transcribe, MAX_AUDIO_BYTES } = await import("./transcribe.js");
+      if (audio.length > MAX_AUDIO_BYTES) return fail(413, "The recording is too long. Keep questions under about a minute.");
+      return ok(await transcribe(audio, typeof mimeType === "string" ? mimeType : ""));
     }),
 
   models: () => handle(async () => ok({ models: MODELS, default: DEFAULT_MODEL })),
 
   // Web fallback, only called after the user agrees to search the internet
-  webAnswer: (question: unknown, model?: unknown) =>
+  webAnswer: (question: unknown, model?: unknown, style?: unknown) =>
     handle(async () => {
       if (typeof question !== "string" || !question.trim() || question.length > 500) return fail(400, "question is required (up to 500 characters)");
       const { answerFromWeb } = await import("./web.js");
-      return ok(await answerFromWeb(question.trim(), resolveModel(model)));
+      return ok(await answerFromWeb(question.trim(), resolveModel(model), style === "voice" ? "voice" : "text"));
     }),
 
   // Quiz step 1: topics the AI suggests for one document

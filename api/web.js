@@ -4,6 +4,6 @@ import { api } from "../dist/lib/api.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Use POST" });
-  const { status, body } = await api.webAnswer(req.body?.question, req.body?.model);
+  const { status, body } = await api.webAnswer(req.body?.question, req.body?.model, req.body?.style);
   res.status(status).json(body);
 }

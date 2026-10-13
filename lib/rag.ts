@@ -28,7 +28,12 @@ export async function retrieve(question: string, topK = 3, document?: string): P
 // Some models (e.g. Qwen) write their reasoning in <think>...</think> before the answer; drop it
 const stripThinking = (text: string) => text.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
 
-export async function answerQuestion(question: string, model: string, document?: string) {
+// Voice answers are read aloud: short, conversational, no markdown
+const VOICE_STYLE = `
+The answer will be spoken aloud. Reply in 2 to 4 short, natural sentences, like talking to a person.
+No markdown, no bullet points, no headings, no code blocks. Still cite sources like [1] at the end of a sentence.`;
+
+export async function answerQuestion(question: string, model: string, document?: string, style: "text" | "voice" = "text") {
   // 1. Retrieve
   const sources = await retrieve(question, 3, document);
 
@@ -44,7 +49,7 @@ export async function answerQuestion(question: string, model: string, document?:
     model,
     temperature: 0,
     messages: [
-      { role: "system", content: SYSTEM_PROMPT },
+      { role: "system", content: style === "voice" ? SYSTEM_PROMPT + VOICE_STYLE : SYSTEM_PROMPT },
       { role: "user", content: `Sources:\n${context}\n\nQuestion: ${question}` },
     ],
   });

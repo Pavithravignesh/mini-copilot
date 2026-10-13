@@ -2,6 +2,7 @@
 // Routes (same as the Vercel functions in api/):
 //   POST   /api/chat           { question, model? }  -> { answer, sources, model, seconds, tokens }
 //   GET    /api/models                                -> { models, default }
+//   POST   /api/transcribe     raw audio bytes        -> { text, seconds }   (Voice mode)
 //   POST   /api/quiz/topics    { name, model? }       -> { name, topics }
 //   POST   /api/quiz/generate  { name, topic, count, model? } -> { topic, questions, sources }
 //   POST   /api/quiz/grade     { question, answer, userAnswer, source, model? } -> { verdict, feedback }
@@ -48,13 +49,15 @@ async function route(req: http.IncomingMessage, url: URL): Promise<ApiResult | n
   switch (`${req.method} ${url.pathname}`) {
     case "POST /api/chat": {
       const body = await readJson(req);
-      return api.chat(body.question, body.model, body.document);
+      return api.chat(body.question, body.model, body.document, body.style);
     }
+    case "POST /api/transcribe":
+      return api.transcribe(await readBytes(req), req.headers["content-type"]);
     case "GET /api/models":
       return api.models();
     case "POST /api/web": {
       const body = await readJson(req);
-      return api.webAnswer(body.question, body.model);
+      return api.webAnswer(body.question, body.model, body.style);
     }
     case "POST /api/quiz/topics": {
       const body = await readJson(req);
